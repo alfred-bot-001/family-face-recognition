@@ -1,0 +1,27 @@
+[project]
+name = "family-face-recognition"
+version = "0.1.0"
+description = "本地部署的家庭人脸识别系统"
+requires-python = ">=3.11"
+dependencies = [
+    "torch>=2.5",
+    "torchvision>=0.20",
+    "opencv-python-headless>=4.10",
+    "insightface>=0.7",
+    "onnxruntime-gpu>=1.20",
+    "fastapi>=0.129",
+    "uvicorn>=0.30",
+    "python-multipart>=0.0.9",
+    "numpy>=2.0",
+]
+
+[project.scripts]
+face-train = "face_recognition.train:main"
+face-api = "face_recognition.api:run"
+
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["face_recognition*"]

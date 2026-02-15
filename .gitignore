@@ -2,9 +2,12 @@ venv/
 data/
 models/*.pkl
 models/*.onnx
+models/train_report.json
 __pycache__/
 *.pyc
 .env
 *.egg-info/
 dist/
 build/
+.DS_Store
+._*

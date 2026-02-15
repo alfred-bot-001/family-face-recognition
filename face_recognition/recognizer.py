@@ -6,7 +6,8 @@ import numpy as np
 from pathlib import Path
 
 # 默认特征库路径
-DEFAULT_DB_PATH = Path(__file__).parent.parent / "models" / "face_db.pkl"
+PROJECT_ROOT = Path(__file__).parent.parent
+DEFAULT_DB_PATH = PROJECT_ROOT / "models" / "face_db.pkl"
 
 
 class FaceRecognizer:

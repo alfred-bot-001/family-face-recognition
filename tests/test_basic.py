@@ -8,7 +8,7 @@ sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
 
 def test_detector():
     """测试人脸检测器能正常初始化"""
-    from src.detector import FaceDetector
+    from face_recognition.detector import FaceDetector
     det = FaceDetector()
     # 用纯色图测试（不应检测到人脸）
     blank = np.zeros((480, 640, 3), dtype=np.uint8)
@@ -20,7 +20,7 @@ def test_detector():
 
 def test_recognizer():
     """测试识别器的注册和识别"""
-    from src.recognizer import FaceRecognizer
+    from face_recognition.recognizer import FaceRecognizer
     import tempfile, os
 
     # 使用临时文件
