@@ -3,6 +3,7 @@ data/
 models/*.pkl
 models/*.onnx
 models/train_report.json
+models/test_report.json
 __pycache__/
 *.pyc
 .env
@@ -11,3 +12,4 @@ dist/
 build/
 .DS_Store
 ._*
+api.log
