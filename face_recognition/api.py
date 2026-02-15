@@ -9,10 +9,13 @@ import cv2
 import numpy as np
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from .detector import FaceDetector
 from .recognizer import FaceRecognizer
 from .video import VideoRecognizer
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 # 全局实例
 detector: FaceDetector = None
@@ -43,6 +46,12 @@ app = FastAPI(
 
 @app.get("/")
 async def root():
+    from fastapi.responses import FileResponse
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/health")
+async def health():
     return {"service": "family-face-recognition", "status": "running"}
 
 
