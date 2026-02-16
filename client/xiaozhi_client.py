@@ -84,9 +84,9 @@ class WakeWordListener:
         self._cooldown = 2.0
         self._last_detect = 0
 
-        encoder = os.path.join(SHERPA_ASR_DIR, "encoder-epoch-99-avg-1.int8.onnx")
-        decoder = os.path.join(SHERPA_ASR_DIR, "decoder-epoch-99-avg-1.int8.onnx")
-        joiner = os.path.join(SHERPA_ASR_DIR, "joiner-epoch-99-avg-1.int8.onnx")
+        encoder = os.path.join(SHERPA_ASR_DIR, "encoder-epoch-99-avg-1.onnx")
+        decoder = os.path.join(SHERPA_ASR_DIR, "decoder-epoch-99-avg-1.onnx")
+        joiner = os.path.join(SHERPA_ASR_DIR, "joiner-epoch-99-avg-1.onnx")
         tokens = os.path.join(SHERPA_ASR_DIR, "tokens.txt")
 
         log.info(f"加载 sherpa-onnx 流式ASR: {SHERPA_ASR_DIR}")
