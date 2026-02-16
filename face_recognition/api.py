@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .detector import FaceDetector
 from .recognizer import FaceRecognizer
 from .video import VideoRecognizer
+from .gesture import WaveDetector
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -22,17 +23,19 @@ STATIC_DIR = Path(__file__).parent / "static"
 detector: FaceDetector = None
 recognizer: FaceRecognizer = None
 video_recognizer: VideoRecognizer = None
+wave_detector: WaveDetector = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """启动时初始化模型"""
-    global detector, recognizer, video_recognizer
+    global detector, recognizer, video_recognizer, wave_detector
     print("[API] 正在加载模型...")
     detector = FaceDetector()
     recognizer = FaceRecognizer()
     video_recognizer = VideoRecognizer(detector, recognizer)
-    print("[API] 模型加载完成")
+    wave_detector = WaveDetector()
+    print("[API] 模型加载完成（含手势检测）")
     yield
     print("[API] 服务关闭")
 
@@ -89,10 +92,14 @@ async def recognize_image(file: UploadFile = File(...)):
     # 检测人脸
     faces = detector.detect_with_info(image)
 
+    # 手势检测（与人脸检测并行处理同一帧）
+    gesture = wave_detector.detect(image)
+
     if not faces:
         return JSONResponse(content={
             "faces": [],
             "message": "未检测到人脸",
+            "gesture": gesture,
             "time_ms": round((time.time() - start) * 1000),
         })
 
@@ -113,6 +120,7 @@ async def recognize_image(file: UploadFile = File(...)):
     return {
         "faces": results,
         "count": len(results),
+        "gesture": gesture,
         "time_ms": elapsed,
     }
 

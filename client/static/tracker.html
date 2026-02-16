@@ -112,6 +112,10 @@
                     <div id="faceList"></div>
                 </div>
                 <div class="card">
+                    <h2>👋 手势状态</h2>
+                    <div id="gestureStatus" style="text-align:center;padding:8px;color:#888">等待检测...</div>
+                </div>
+                <div class="card">
                     <h2>📋 系统日志</h2>
                     <div class="log-panel" id="logPanel"></div>
                 </div>
@@ -137,6 +141,20 @@
                     trackingTarget.className = 'tracking-target idle';
                     trackingTarget.textContent = '搜索中...';
                     trackingInfo.textContent = '';
+                }
+                // 手势
+                const gs = d.gesture || {};
+                const gestureEl = document.getElementById('gestureStatus');
+                if (gs.wave_detected) {
+                    gestureEl.innerHTML = '<span style="font-size:1.5rem">👋</span> 挥手检测到！';
+                    gestureEl.style.color = '#ffeb3b';
+                } else if (gs.hands_count > 0) {
+                    const palm = (gs.hand_landmarks||[]).some(h=>h.palm_open) ? '🖐️ 手掌张开' : '✊ 握拳';
+                    gestureEl.innerHTML = `${palm} (${gs.hands_count}只手)`;
+                    gestureEl.style.color = '#4caf50';
+                } else {
+                    gestureEl.innerHTML = '未检测到手';
+                    gestureEl.style.color = '#555';
                 }
                 panAngle.textContent = `${d.pan || 0}°`;
                 tiltAngle.textContent = `${d.tilt || 0}°`;

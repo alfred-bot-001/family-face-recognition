@@ -35,6 +35,8 @@ GREET_MESSAGES = {
     "wife": "嫂子好！",
 }
 GREET_DEFAULT = "你好！"  # 未知已知人脸的默认问候
+WAVE_GREET_COOLDOWN = 10  # 挥手问候冷却（秒，比普通问候短）
+WAVE_GREET_MSG = "你好呀！我看到你在挥手！"  # 挥手时的默认问候
 
 # 舵机参数（与 ugv_rpi/cv_ctrl.py 机械限位一致）
 PAN_MIN, PAN_MAX = -180, 180      # 水平范围
@@ -105,6 +107,36 @@ class VoiceGreeter:
             name = face.get("name", "unknown")
             if name != "unknown":
                 self.greet(name)
+
+    def on_wave(self, faces: list[dict]):
+        """检测到挥手时触发：向当前跟踪的人问好，或通用问候"""
+        if not self.engine:
+            return
+        now = time.time()
+        if now - self.last_greet_time.get("_wave_", 0) < WAVE_GREET_COOLDOWN:
+            return
+
+        self.last_greet_time["_wave_"] = now
+
+        # 找当前识别到的已知人脸
+        known = [f for f in faces if f.get("name", "unknown") != "unknown"]
+        if known:
+            # 向优先级最高的人打招呼
+            for priority_name in PRIORITY_NAMES:
+                for f in known:
+                    if f["name"] == priority_name:
+                        msg = GREET_MESSAGES.get(priority_name, GREET_DEFAULT)
+                        add_log("INFO", f"👋 检测到挥手！向 {priority_name} 打招呼: {msg}")
+                        threading.Thread(target=self._speak, args=(msg,), daemon=True).start()
+                        return
+            # 没有优先目标，向第一个已知的人问好
+            name = known[0]["name"]
+            msg = GREET_MESSAGES.get(name, GREET_DEFAULT)
+            add_log("INFO", f"👋 检测到挥手！向 {name} 打招呼: {msg}")
+            threading.Thread(target=self._speak, args=(msg,), daemon=True).start()
+        else:
+            add_log("INFO", f"👋 检测到挥手！{WAVE_GREET_MSG}")
+            threading.Thread(target=self._speak, args=(WAVE_GREET_MSG,), daemon=True).start()
 
 
 # ============================================================
@@ -478,6 +510,11 @@ def camera_tracking_loop(api_url: str, camera_id: int, width: int, height: int,
                 # 语音问候
                 greeter.check_faces(faces)
 
+                # 挥手检测
+                gesture = data.get("gesture", {})
+                if gesture.get("wave_detected"):
+                    greeter.on_wave(faces)
+
                 with lock:
                     latest_results = faces
                     latest_frame = draw_tracking_results(frame, faces, tracker.tracking_name)
@@ -493,6 +530,7 @@ def camera_tracking_loop(api_url: str, camera_id: int, width: int, height: int,
                         "api_err": api_err_count,
                         "greet_history": {k: time.strftime("%H:%M:%S", time.localtime(v))
                                           for k, v in greeter.last_greet_time.items()},
+                        "gesture": gesture,
                     }
             else:
                 api_err_count += 1
