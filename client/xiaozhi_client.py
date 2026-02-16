@@ -31,7 +31,7 @@ FRAME_SIZE = SAMPLE_RATE * FRAME_DURATION_MS // 1000  # 960
 AUDIO_PLAY = "plughw:3,0"
 AUDIO_REC = "plughw:2,0"
 WAKE_WORD = "小智"
-VOSK_MODEL = os.path.join(os.path.dirname(__file__), "models", "vosk-model-small-cn-0.22")
+SHERPA_ASR_DIR = os.path.join(os.path.dirname(__file__), "models", "sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16")
 
 # ============================================================
 #  Opus
@@ -59,20 +59,43 @@ def speak_async(text: str):
     threading.Thread(target=speak, args=(text,), daemon=True).start()
 
 # ============================================================
-#  唤醒词检测 (vosk)
+#  唤醒词检测 (sherpa-onnx 流式ASR + 热词)
 # ============================================================
 class WakeWordListener:
     def __init__(self, device=AUDIO_REC):
-        from vosk import Model, KaldiRecognizer
-        log.info(f"加载 vosk 模型: {VOSK_MODEL}")
-        self.model = Model(VOSK_MODEL)
-        self.recognizer = KaldiRecognizer(self.model, SAMPLE_RATE)
+        import sherpa_onnx
+        import numpy as np
+        self.np = np
         self.device = device
         self.paused = False
         self.active = True
         self._proc = None
         self._cooldown = 2.0
         self._last_detect = 0
+
+        encoder = os.path.join(SHERPA_ASR_DIR, "encoder-epoch-99-avg-1.int8.onnx")
+        decoder = os.path.join(SHERPA_ASR_DIR, "decoder-epoch-99-avg-1.onnx")
+        joiner = os.path.join(SHERPA_ASR_DIR, "joiner-epoch-99-avg-1.int8.onnx")
+        tokens = os.path.join(SHERPA_ASR_DIR, "tokens.txt")
+
+        log.info(f"加载 sherpa-onnx 流式ASR: {SHERPA_ASR_DIR}")
+        self.recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
+            encoder=encoder,
+            decoder=decoder,
+            joiner=joiner,
+            tokens=tokens,
+            num_threads=4,
+            sample_rate=SAMPLE_RATE,
+            feature_dim=80,
+            provider="cpu",
+            hotwords_file="",
+            hotwords_score=1.5,
+            enable_endpoint_detection=True,
+            rule1_min_trailing_silence=2.4,
+            rule2_min_trailing_silence=1.2,
+            rule3_min_utterance_length=300,
+        )
+        log.info("sherpa-onnx 流式ASR 加载完成")
 
     def start(self, on_wake):
         threading.Thread(target=self._listen, args=(on_wake,), daemon=True).start()
@@ -84,33 +107,43 @@ class WakeWordListener:
              "-r", str(SAMPLE_RATE), "-c", "1", "-t", "raw", "-q"],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
         )
-        chunk = 4000
+        stream = self.recognizer.create_stream()
+        chunk_samples = int(SAMPLE_RATE * 0.1)  # 100ms
+        chunk_bytes = chunk_samples * 2
+        last_text = ""
         while self.active and self._proc.poll() is None:
-            data = self._proc.stdout.read(chunk)
+            data = self._proc.stdout.read(chunk_bytes)
             if not data or self.paused:
+                if self.paused:
+                    time.sleep(0.1)
                 continue
-            if self.recognizer.AcceptWaveform(data):
-                result = json.loads(self.recognizer.Result())
-                text = result.get("text", "")
-                if text:
-                    log.info(f"vosk: {text}")
-                    if WAKE_WORD in text:
-                        self._trigger(on_wake, text)
-            else:
-                partial = json.loads(self.recognizer.PartialResult())
-                text = partial.get("partial", "")
-                if text and len(text) > 1:
-                    log.info(f"vosk partial: {text}")
+            samples = self.np.frombuffer(data, dtype=self.np.int16).astype(self.np.float32) / 32768.0
+            stream.accept_waveform(SAMPLE_RATE, samples)
+            while self.recognizer.is_ready(stream):
+                self.recognizer.decode_stream(stream)
+            text = self.recognizer.get_result(stream).strip()
+            # 有新文字就打印
+            if text and text != last_text:
+                log.info(f"asr: {text}")
+                last_text = text
                 if WAKE_WORD in text:
-                    self._trigger(on_wake, f"partial: {text}")
+                    self._trigger(on_wake, text, stream)
+            # endpoint 检测到句子结束
+            if self.recognizer.is_endpoint(stream):
+                if text:
+                    log.info(f"asr final: {text}")
+                    if WAKE_WORD in text:
+                        self._trigger(on_wake, text, stream)
+                self.recognizer.reset(stream)
+                last_text = ""
 
-    def _trigger(self, on_wake, text):
+    def _trigger(self, on_wake, text, stream):
         now = time.time()
         if now - self._last_detect < self._cooldown:
             return
         self._last_detect = now
         log.info(f"🎯 唤醒词! ({text})")
-        self.recognizer.Reset()
+        self.recognizer.reset(stream)
         on_wake()
 
     def pause(self):
@@ -118,7 +151,6 @@ class WakeWordListener:
 
     def resume(self):
         self.paused = False
-        self.recognizer.Reset()
 
     def stop(self):
         self.active = False
