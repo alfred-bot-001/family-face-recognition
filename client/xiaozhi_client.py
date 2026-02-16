@@ -32,7 +32,16 @@ AUDIO_PLAY = "plughw:3,0"
 AUDIO_REC = "plughw:2,0"
 WAKE_WORD = "小智"
 # sherpa-onnx 常见误识别变体
-WAKE_VARIANTS = ["小智", "想知", "小知", "想智", "晓智", "晓知"]
+def _contains_wake(text):
+    """模糊匹配唤醒词 — 检查文本中是否包含听起来像'小智'的两字组合"""
+    # 声母相似组: x/s/sh/xiao 开头的字
+    first_chars = set("小晓想肖消萧削梭所索缩")
+    # 韵母相似组: zhi/zhi/zhi 结尾的字
+    second_chars = set("智知之枝支值吱芝织直")
+    for i in range(len(text) - 1):
+        if text[i] in first_chars and text[i+1] in second_chars:
+            return True
+    return False
 SHERPA_ASR_DIR = os.path.join(os.path.dirname(__file__), "models", "sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16")
 
 # ============================================================
@@ -127,13 +136,13 @@ class WakeWordListener:
             if text and text != last_text:
                 log.info(f"asr: {text}")
                 last_text = text
-                if any(w in text for w in WAKE_VARIANTS):
+                if _contains_wake(text):
                     self._trigger(on_wake, text, stream)
             # endpoint 检测到句子结束
             if self.recognizer.is_endpoint(stream):
                 if text:
                     log.info(f"asr final: {text}")
-                    if any(w in text for w in WAKE_VARIANTS):
+                    if _contains_wake(text):
                         self._trigger(on_wake, text, stream)
                 self.recognizer.reset(stream)
                 last_text = ""
