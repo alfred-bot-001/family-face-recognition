@@ -103,25 +103,38 @@ class WakeWordListener:
         threading.Thread(target=self._listen, args=(on_wake,), daemon=True).start()
 
     def _listen(self, on_wake):
-        log.info(f"👂 监听唤醒词: {WAKE_WORD}")
-        self._proc = subprocess.Popen(
-            ["arecord", "-D", self.device, "-f", "S16_LE",
-             "-r", str(SAMPLE_RATE), "-c", "1", "-t", "raw", "-q"],
-            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
-        )
-        stream = self.kws.create_stream()
         chunk_samples = int(SAMPLE_RATE * 0.1)  # 100ms
         chunk_bytes = chunk_samples * 2
         read_count = 0
-        while self.active and self._proc.poll() is None:
+
+        while self.active:
+            # 等待非暂停状态
+            if self.paused:
+                time.sleep(0.1)
+                continue
+
+            # 启动/重启 arecord
+            if self._proc is None or self._proc.poll() is not None:
+                self._proc = subprocess.Popen(
+                    ["arecord", "-D", self.device, "-f", "S16_LE",
+                     "-r", str(SAMPLE_RATE), "-c", "1", "-t", "raw", "-q"],
+                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+                )
+                stream = self.kws.create_stream()
+                log.info(f"👂 监听唤醒词: {WAKE_WORD}")
+
             data = self._proc.stdout.read(chunk_bytes)
+            if not data:
+                time.sleep(0.05)
+                continue
+
             read_count += 1
             if read_count % 100 == 0:
                 log.info(f"[debug] audio chunks: {read_count}, paused={self.paused}")
-            if not data or self.paused:
-                if self.paused:
-                    time.sleep(0.1)
+
+            if self.paused:
                 continue
+
             samples = self.np.frombuffer(data, dtype=self.np.int16).astype(self.np.float32) / 32768.0
             stream.accept_waveform(SAMPLE_RATE, samples)
             while self.kws.is_ready(stream):
@@ -141,6 +154,14 @@ class WakeWordListener:
 
     def pause(self):
         self.paused = True
+        # 停掉 arecord 释放设备，让录音对话可以用
+        if self._proc:
+            try:
+                self._proc.terminate()
+                self._proc.wait(timeout=2)
+            except Exception:
+                pass
+            self._proc = None
 
     def resume(self):
         self.paused = False
