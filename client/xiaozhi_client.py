@@ -92,7 +92,7 @@ class WakeWordListener:
             feature_dim=80,
             max_active_paths=4,
             keywords_score=1.0,
-            keywords_threshold=0.25,
+            keywords_threshold=0.1,
             num_trailing_blanks=1,
             provider="cpu",
         )
@@ -113,17 +113,21 @@ class WakeWordListener:
         # 每次读 160ms 的音频 (16000 * 0.16 * 2 = 5120 bytes)
         chunk_samples = int(SAMPLE_RATE * 0.16)
         chunk_bytes = chunk_samples * 2
+        chunk_count = 0
         while self.active and self._proc.poll() is None:
             data = self._proc.stdout.read(chunk_bytes)
             if not data or self.paused:
                 continue
+            chunk_count += 1
+            if chunk_count == 1 or chunk_count % 200 == 0:
+                log.info(f"📡 音频块 #{chunk_count}, {len(data)} bytes, rms={self._rms(data):.0f}")
             # 转成 float32 给 sherpa
             samples = self.np.frombuffer(data, dtype=self.np.int16).astype(self.np.float32) / 32768.0
             self.stream.accept_waveform(SAMPLE_RATE, samples)
             while self.kws.is_ready(self.stream):
                 self.kws.decode_stream(self.stream)
             result = self.kws.get_result(self.stream)
-            if result:
+            if result.strip():
                 now = time.time()
                 if now - self._last_detect > self._cooldown:
                     self._last_detect = now
@@ -132,6 +136,11 @@ class WakeWordListener:
                     on_wake()
                 else:
                     self.kws.reset_stream(self.stream)
+
+    def _rms(self, data):
+        """计算音频 RMS 音量"""
+        arr = self.np.frombuffer(data, dtype=self.np.int16).astype(self.np.float32)
+        return self.np.sqrt(self.np.mean(arr ** 2))
 
     def pause(self):
         self.paused = True
