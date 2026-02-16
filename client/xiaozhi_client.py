@@ -31,6 +31,8 @@ FRAME_SIZE = SAMPLE_RATE * FRAME_DURATION_MS // 1000  # 960
 AUDIO_PLAY = "plughw:3,0"
 AUDIO_REC = "plughw:2,0"
 WAKE_WORD = "小智"
+# sherpa-onnx 常见误识别变体
+WAKE_VARIANTS = ["小智", "想知", "小知", "想智", "晓智", "晓知"]
 SHERPA_ASR_DIR = os.path.join(os.path.dirname(__file__), "models", "sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16")
 
 # ============================================================
@@ -125,13 +127,13 @@ class WakeWordListener:
             if text and text != last_text:
                 log.info(f"asr: {text}")
                 last_text = text
-                if WAKE_WORD in text:
+                if any(w in text for w in WAKE_VARIANTS):
                     self._trigger(on_wake, text, stream)
             # endpoint 检测到句子结束
             if self.recognizer.is_endpoint(stream):
                 if text:
                     log.info(f"asr final: {text}")
-                    if WAKE_WORD in text:
+                    if any(w in text for w in WAKE_VARIANTS):
                         self._trigger(on_wake, text, stream)
                 self.recognizer.reset(stream)
                 last_text = ""
