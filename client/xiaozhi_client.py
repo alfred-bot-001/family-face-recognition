@@ -142,12 +142,20 @@ class XiaozhiClient:
             "Protocol-Version": "1",
         }
         log.info(f"🔗 连接 {self.ws_url}")
-        self.ws = await websockets.connect(
-            self.ws_url, max_size=None,
-            additional_headers=headers,
-            ping_interval=20, ping_timeout=20,
-            close_timeout=10,
-        )
+        try:
+            self.ws = await websockets.connect(
+                self.ws_url, max_size=None,
+                additional_headers=headers,
+                ping_interval=20, ping_timeout=20,
+                close_timeout=10,
+            )
+        except TypeError:
+            self.ws = await websockets.connect(
+                self.ws_url, max_size=None,
+                extra_headers=headers,
+                ping_interval=20, ping_timeout=20,
+                close_timeout=10,
+            )
         # 发 hello
         hello = {
             "type": "hello",
