@@ -16,6 +16,7 @@ import subprocess
 import sys
 import threading
 import time
+import requests
 # import uuid
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -195,6 +196,51 @@ class WakeWordListener:
 # ============================================================
 #  小智客户端 (长连接)
 # ============================================================
+class PalmGestureListener:
+    """通过 face_tracker 的 /api/status 轮询手掌状态：出现开始录音，消失结束录音"""
+
+    def __init__(self, status_url="http://127.0.0.1:5000/api/status", interval=0.2, hold_seconds=0.8):
+        self.status_url = status_url
+        self.interval = interval
+        self.hold_seconds = hold_seconds
+        self.active = True
+        self._last_palm_ts = 0.0
+        self._recording = False
+
+    def start(self, on_palm_start, on_palm_end):
+        def _run():
+            log.info("✋ 手掌触发模式已启用（张手开始，放下结束）")
+            while self.active:
+                palm = False
+                try:
+                    r = requests.get(self.status_url, timeout=0.5)
+                    if r.ok:
+                        st = r.json()
+                        g = (st.get("gesture") or {}).get("gesture", "none")
+                        palm = (g == "open_palm")
+                except Exception:
+                    pass
+
+                now = time.time()
+                if palm:
+                    self._last_palm_ts = now
+                    if not self._recording:
+                        self._recording = True
+                        on_palm_start()
+                else:
+                    # 手掌消失持续一段时间后停止，避免抖动
+                    if self._recording and (now - self._last_palm_ts) > self.hold_seconds:
+                        self._recording = False
+                        on_palm_end()
+
+                time.sleep(self.interval)
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def stop(self):
+        self.active = False
+
+
 class XiaozhiClient:
     def __init__(self, ws_url: str, device_id: str):
         self.ws_url = ws_url
@@ -325,19 +371,20 @@ class XiaozhiClient:
                 log.error(f"aplay stderr: {err}")
             self._play_proc = None
 
-    async def on_wake_word(self):
-        """唤醒词触发"""
+    async def on_palm_start(self):
+        """手掌出现：开始录音对话"""
         if not self.connected:
-            log.warning("未连接，忽略唤醒")
+            log.warning("未连接，忽略手掌触发")
+            return
+        if self.is_listening:
             return
 
-        log.info("🎙️ 唤醒词触发，开始对话")
+        log.info("✋ 手掌出现，开始录音")
 
         # 如果服务端在说话，先打断
         if self.is_speaking:
-            abort = {"session_id": self.session_id, "type": "abort", "reason": "wake_word_detected"}
+            abort = {"session_id": self.session_id, "type": "abort", "reason": "palm_detected"}
             await self.ws.send(json.dumps(abort))
-            # 关闭播放进程
             if self._play_proc:
                 try:
                     self._play_proc.terminate()
@@ -345,19 +392,6 @@ class XiaozhiClient:
                     pass
                 self._play_proc = None
 
-        # 发唤醒词检测消息
-        detect = {
-            "session_id": self.session_id,
-            "type": "listen",
-            "state": "detect",
-            "text": WAKE_WORD,
-        }
-        await self.ws.send(json.dumps(detect))
-
-        # 给唤醒词尾音一个“泄放时间”，避免把“乐迪”当成用户提问
-        await asyncio.sleep(0.6)
-
-        # 发开始监听
         start = {
             "session_id": self.session_id,
             "type": "listen",
@@ -366,9 +400,15 @@ class XiaozhiClient:
         }
         await self.ws.send(json.dumps(start))
 
-        # 开始录音发送
         self.is_listening = True
         self._send_task = asyncio.create_task(self._record_and_send())
+
+    async def on_palm_end(self):
+        """手掌消失：停止录音并等待服务端回复"""
+        if not self.is_listening:
+            return
+        log.info("🖐️ 手掌消失，结束录音")
+        await self.stop_listening()
 
     async def _record_and_send(self):
         """录音并通过 WebSocket 发送 Opus 帧"""
@@ -428,26 +468,19 @@ async def main(ws_url: str):
         log.error("连接失败，退出")
         return
 
-    speak_async("悟空上线了")
+    speak_async("手掌对话模式上线了")
 
-    # 唤醒词监听
-    listener = WakeWordListener()
+    # 手掌触发监听（来自 face_tracker 的手势识别结果）
     loop = asyncio.get_event_loop()
+    palm_listener = PalmGestureListener(status_url="http://127.0.0.1:5000/api/status")
 
-    def on_wake():
-        listener.pause()
-        asyncio.run_coroutine_threadsafe(client.on_wake_word(), loop)
-        # 等服务端说完后恢复监听
-        def wait_and_resume():
-            time.sleep(2)  # 等唤醒处理
-            while client.is_listening or client.is_speaking:
-                time.sleep(0.5)
-            time.sleep(1)
-            listener.resume()
-            log.info(f"👂 继续监听: {WAKE_WORD}")
-        threading.Thread(target=wait_and_resume, daemon=True).start()
+    def on_palm_start():
+        asyncio.run_coroutine_threadsafe(client.on_palm_start(), loop)
 
-    listener.start(on_wake)
+    def on_palm_end():
+        asyncio.run_coroutine_threadsafe(client.on_palm_end(), loop)
+
+    palm_listener.start(on_palm_start, on_palm_end)
 
     # 消息循环（保持长连接）
     await client.message_loop()
