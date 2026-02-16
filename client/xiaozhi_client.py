@@ -29,7 +29,7 @@ CHANNELS = 1
 FRAME_DURATION_MS = 60
 FRAME_SIZE = SAMPLE_RATE * FRAME_DURATION_MS // 1000  # 960
 AUDIO_PLAY = "plughw:3,0"
-AUDIO_REC = "plughw:2,0"
+AUDIO_REC = "plughw:5,0"
 WAKE_WORD = "小智"
 # sherpa-onnx 常见误识别变体
 def _contains_wake(text):
