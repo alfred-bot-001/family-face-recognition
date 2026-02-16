@@ -118,7 +118,7 @@ class VoiceGreeter:
             try:
                 # espeak 输出 wav → aplay 播放到 USB 音频
                 proc = subprocess.Popen(
-                    ["espeak", "-v", "zh", "-s", "160", "--stdout", text],
+                    ["espeak", "-v", "zh", "-s", "320", "--stdout", text],
                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 )
                 subprocess.run(
@@ -512,7 +512,7 @@ def camera_tracking_loop(api_url: str, camera_id: int, width: int, height: int,
 
         # 本地手势检测（每帧都做，不依赖 API）
         gesture = gesture_det.detect(frame)
-        if gesture.get("wave_detected"):
+        if gesture.get("wave_detected") or gesture.get("gesture") == "open_palm":
             greeter.on_wave(latest_results)
 
         # 非识别帧：用上次结果更新显示
