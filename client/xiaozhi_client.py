@@ -1,15 +1,10 @@
 #!/usr/bin/env python3
 """
 小智语音对话客户端 — 运行在老三(树莓派)上
-唤醒词: "乐迪" (通过 vosk 离线识别)
-通过 WebSocket 连接小智后端服务，实现语音对话
+唤醒词: "悟空" (vosk 离线识别)
+保持 WebSocket 长连接，检测唤醒词后开始录音对话
 
-流程:
-1. vosk 持续监听麦克风，检测唤醒词 "乐迪"
-2. 检测到后连接 WebSocket，开始录音并发送 Opus 帧
-3. 服务端 VAD 检测到静音后处理 ASR→LLM→TTS
-4. 接收 Opus 音频帧解码播放
-5. 对话结束回到监听状态
+参考: py-xiaozhi 项目协议实现
 """
 
 import argparse
@@ -18,12 +13,10 @@ import json
 import logging
 import os
 import subprocess
-import struct
 import sys
 import threading
 import time
 import uuid
-from collections import deque
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("xiaozhi")
@@ -39,299 +32,336 @@ AUDIO_PLAY = "plughw:3,0"
 AUDIO_REC = "plughw:2,0"
 WAKE_WORD = "悟空"
 VOSK_MODEL = os.path.join(os.path.dirname(__file__), "models", "vosk-model-small-cn-0.22")
-TALK_TIMEOUT = 15  # 对话最长时间(秒)
 
 # ============================================================
-#  Opus 编解码
+#  Opus
 # ============================================================
 import opuslib_next as opuslib
 _encoder = opuslib.Encoder(SAMPLE_RATE, CHANNELS, opuslib.APPLICATION_VOIP)
 _decoder = opuslib.Decoder(SAMPLE_RATE, CHANNELS)
 
-
 def pcm_to_opus(pcm: bytes) -> bytes:
     return _encoder.encode(pcm, FRAME_SIZE)
-
 
 def opus_to_pcm(data: bytes) -> bytes:
     return _decoder.decode(data, FRAME_SIZE)
 
-
 # ============================================================
-#  本地语音 (espeak)
+#  本地 TTS
 # ============================================================
 def speak(text: str):
-    """本地 TTS"""
     subprocess.run(
         f'espeak -v zh -s 320 --stdout "{text}" | aplay -D {AUDIO_PLAY} -q',
         shell=True, stderr=subprocess.DEVNULL
     )
 
-
 def speak_async(text: str):
     threading.Thread(target=speak, args=(text,), daemon=True).start()
 
-
 # ============================================================
-#  唤醒词检测 (vosk 离线)
+#  唤醒词检测 (vosk)
 # ============================================================
 class WakeWordListener:
-    """用 vosk 持续监听麦克风，检测唤醒词"""
-
-    def __init__(self, model_path=VOSK_MODEL, device=AUDIO_REC, wake_word=WAKE_WORD):
+    def __init__(self, device=AUDIO_REC):
         from vosk import Model, KaldiRecognizer
-        log.info(f"加载 vosk 模型: {model_path}")
-        self.model = Model(model_path)
+        log.info(f"加载 vosk 模型: {VOSK_MODEL}")
+        self.model = Model(VOSK_MODEL)
         self.recognizer = KaldiRecognizer(self.model, SAMPLE_RATE)
         self.device = device
-        self.wake_word = wake_word
+        self.paused = False
         self.active = True
-        self.paused = False  # 对话期间暂停检测
+        self._proc = None
 
-    def listen(self, on_wake):
-        """阻塞式监听，检测到唤醒词调用 on_wake()"""
-        log.info(f"👂 监听唤醒词: {self.wake_word}")
-        proc = subprocess.Popen(
+    def start(self, on_wake):
+        """后台线程监听唤醒词"""
+        threading.Thread(target=self._listen, args=(on_wake,), daemon=True).start()
+
+    def _listen(self, on_wake):
+        log.info(f"👂 监听唤醒词: {WAKE_WORD}")
+        self._proc = subprocess.Popen(
             ["arecord", "-D", self.device, "-f", "S16_LE",
              "-r", str(SAMPLE_RATE), "-c", "1", "-t", "raw", "-q"],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
         )
-        chunk_size = 4000  # ~125ms of audio
-        try:
-            while self.active:
-                data = proc.stdout.read(chunk_size)
-                if not data:
-                    break
-                if self.paused:
-                    continue
-                if self.recognizer.AcceptWaveform(data):
-                    result = json.loads(self.recognizer.Result())
-                    text = result.get("text", "")
-                    if text:
-                        log.info(f"vosk: {text}")
-                        if self.wake_word in text:
-                            log.info(f"🎯 唤醒词检测到! ({text})")
-                            on_wake()
-                else:
-                    partial = json.loads(self.recognizer.PartialResult())
-                    text = partial.get("partial", "")
-                    if self.wake_word in text:
-                        log.info(f"🎯 唤醒词检测到! (partial: {text})")
-                        self.recognizer.Reset()
+        chunk = 4000
+        while self.active and self._proc.poll() is None:
+            data = self._proc.stdout.read(chunk)
+            if not data or self.paused:
+                continue
+            if self.recognizer.AcceptWaveform(data):
+                result = json.loads(self.recognizer.Result())
+                text = result.get("text", "")
+                if text:
+                    log.info(f"vosk: {text}")
+                    if WAKE_WORD in text:
+                        log.info(f"🎯 唤醒词! ({text})")
                         on_wake()
-        finally:
-            proc.terminate()
+            else:
+                partial = json.loads(self.recognizer.PartialResult())
+                text = partial.get("partial", "")
+                if WAKE_WORD in text:
+                    log.info(f"🎯 唤醒词! (partial: {text})")
+                    self.recognizer.Reset()
+                    on_wake()
 
     def pause(self):
         self.paused = True
 
     def resume(self):
-        self.recognizer.Reset()
         self.paused = False
+        self.recognizer.Reset()
 
     def stop(self):
         self.active = False
-
+        if self._proc:
+            self._proc.terminate()
 
 # ============================================================
-#  小智 WebSocket 对话
+#  小智客户端 (长连接)
 # ============================================================
-async def do_conversation(ws_url: str, device_id: str):
-    """进行一次完整对话:连接→录音→等回复→播放→断开"""
-    import websockets
+class XiaozhiClient:
+    def __init__(self, ws_url: str, device_id: str):
+        self.ws_url = ws_url
+        self.device_id = device_id
+        self.session_id = None
+        self.ws = None
+        self.connected = False
+        self.is_speaking = False  # 服务端在说话
+        self.is_listening = False  # 正在录音
+        self._rec_proc = None
+        self._play_proc = None
+        self._loop = None
+        self._send_task = None
 
-    log.info(f"🔗 连接 {ws_url}")
-    try:
-        # 通过 headers 传 device-id（服务端从 headers 读取）
+    async def connect(self):
+        """建立长连接"""
+        import websockets
         headers = {
-            "Device-Id": device_id,
-            "Client-Id": device_id,
+            "Device-Id": self.device_id,
+            "Client-Id": self.device_id,
+            "Protocol-Version": "1",
         }
-        async with websockets.connect(ws_url, max_size=None, close_timeout=5,
-                                       additional_headers=headers) as ws:
-            # === 握手 ===
-            hello = {
-                "type": "hello",
-                "device_id": device_id,
-                "device_name": "老三-树莓派",
-                "device_mac": "AA:BB:CC:DD:EE:FF",
-                "token": "",
-                "features": {"mcp": False},
-                "audio_params": {
-                    "format": "opus",
-                    "sample_rate": 16000,
-                    "channels": 1,
-                    "frame_duration": FRAME_DURATION_MS
-                }
-            }
-            await ws.send(json.dumps(hello))
+        log.info(f"🔗 连接 {self.ws_url}")
+        self.ws = await websockets.connect(
+            self.ws_url, max_size=None,
+            additional_headers=headers,
+            ping_interval=20, ping_timeout=20,
+            close_timeout=10,
+        )
+        # 发 hello
+        hello = {
+            "type": "hello",
+            "version": 1,
+            "transport": "websocket",
+            "device_id": self.device_id,
+            "device_name": "老三-树莓派",
+            "features": {"mcp": False},
+            "audio_params": {
+                "format": "opus",
+                "sample_rate": SAMPLE_RATE,
+                "channels": CHANNELS,
+                "frame_duration": FRAME_DURATION_MS,
+            },
+        }
+        await self.ws.send(json.dumps(hello))
+        log.info("📤 已发送 hello")
 
-            resp = await asyncio.wait_for(ws.recv(), timeout=10)
-            try:
-                data = json.loads(resp)
-            except Exception:
-                log.error(f"握手响应非JSON: {resp[:200]}")
-                return
-            session_id = data.get("session_id", "unknown")
-            log.info(f"✅ 握手成功, session: {session_id}, keys: {list(data.keys())}")
+        # 等 hello 响应
+        resp = await asyncio.wait_for(self.ws.recv(), timeout=10)
+        try:
+            data = json.loads(resp)
+            self.session_id = data.get("session_id", "")
+            log.info(f"✅ 连接成功, session: {self.session_id}")
+            self.connected = True
+        except Exception as e:
+            log.error(f"握手失败: {e}, resp: {str(resp)[:200]}")
+            return False
+        return True
 
-            # === 发送 listen start ===
-            await ws.send(json.dumps({"type": "listen", "state": "start", "mode": "auto"}))
+    async def message_loop(self):
+        """持续接收消息"""
+        try:
+            async for message in self.ws:
+                if isinstance(message, bytes):
+                    # Opus 音频 → 解码播放
+                    try:
+                        pcm = opus_to_pcm(message)
+                        self._play_pcm(pcm)
+                    except Exception:
+                        pass
+                else:
+                    data = json.loads(message)
+                    await self._handle(data)
+        except Exception as e:
+            log.error(f"连接断开: {e}")
+            self.connected = False
 
-            # === 录音并发送 ===
-            stop_recording = threading.Event()
-            rec_proc = subprocess.Popen(
-                ["arecord", "-D", AUDIO_REC, "-f", "S16_LE",
-                 "-r", str(SAMPLE_RATE), "-c", "1", "-t", "raw", "-q"],
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
-            )
+    async def _handle(self, msg: dict):
+        t = msg.get("type", "")
+        if t == "tts":
+            state = msg.get("state", "")
+            if state == "start":
+                self.is_speaking = True
+                log.info("🔊 服务端开始说话")
+            elif state == "sentence_start":
+                log.info(f"💬 {msg.get('text', '')}")
+            elif state == "stop":
+                self.is_speaking = False
+                log.info("🔊 服务端说话结束")
+        elif t == "stt":
+            log.info(f"🎤 识别: {msg.get('text', '')}")
+        elif t == "llm":
+            log.info(f"🤖 {msg.get('text', '')}")
+        elif t == "hello":
+            self.session_id = msg.get("session_id", self.session_id)
+            log.info(f"hello 响应, session: {self.session_id}")
 
-            async def send_audio():
-                frame_bytes = FRAME_SIZE * 2
-                loop = asyncio.get_event_loop()
-                while not stop_recording.is_set():
-                    data = await loop.run_in_executor(None, rec_proc.stdout.read, frame_bytes)
-                    if len(data) == frame_bytes:
-                        try:
-                            opus = pcm_to_opus(data)
-                            await ws.send(opus)
-                        except Exception:
-                            break
+    def _play_pcm(self, pcm: bytes):
+        """直接写入 aplay 进程"""
+        try:
+            if self._play_proc is None or self._play_proc.poll() is not None:
+                self._play_proc = subprocess.Popen(
+                    ["aplay", "-D", AUDIO_PLAY, "-f", "S16_LE",
+                     "-r", str(SAMPLE_RATE), "-c", "1", "-q"],
+                    stdin=subprocess.PIPE, stderr=subprocess.DEVNULL
+                )
+            self._play_proc.stdin.write(pcm)
+            self._play_proc.stdin.flush()
+        except Exception:
+            self._play_proc = None
 
-            # === 接收消息 ===
-            player_queue = deque()
-            tts_done = asyncio.Event()
-            conversation_done = asyncio.Event()
+    async def on_wake_word(self):
+        """唤醒词触发"""
+        if not self.connected:
+            log.warning("未连接，忽略唤醒")
+            return
 
-            def play_audio():
-                """播放线程"""
-                play_proc = None
-                while not conversation_done.is_set():
-                    if player_queue:
-                        buf = bytearray()
-                        while player_queue and len(buf) < SAMPLE_RATE * 2:
-                            buf.extend(player_queue.popleft())
-                        if buf:
-                            try:
-                                play_proc = subprocess.Popen(
-                                    ["aplay", "-D", AUDIO_PLAY, "-f", "S16_LE",
-                                     "-r", str(SAMPLE_RATE), "-c", "1", "-q"],
-                                    stdin=subprocess.PIPE, stderr=subprocess.DEVNULL
-                                )
-                                play_proc.stdin.write(bytes(buf))
-                                play_proc.stdin.close()
-                                play_proc.wait(timeout=10)
-                            except Exception as e:
-                                log.error(f"播放错误: {e}")
-                    else:
-                        time.sleep(0.01)
+        log.info("🎙️ 唤醒词触发，开始对话")
 
-            play_thread = threading.Thread(target=play_audio, daemon=True)
-            play_thread.start()
-
-            async def recv_messages():
+        # 如果服务端在说话，先打断
+        if self.is_speaking:
+            abort = {"session_id": self.session_id, "type": "abort", "reason": "wake_word_detected"}
+            await self.ws.send(json.dumps(abort))
+            # 关闭播放进程
+            if self._play_proc:
                 try:
-                    async for message in ws:
-                        if isinstance(message, bytes):
-                            try:
-                                pcm = opus_to_pcm(message)
-                                player_queue.append(pcm)
-                            except Exception:
-                                pass
-                        else:
-                            msg = json.loads(message)
-                            msg_type = msg.get("type", "")
+                    self._play_proc.terminate()
+                except Exception:
+                    pass
+                self._play_proc = None
 
-                            if msg_type == "tts":
-                                state = msg.get("state", "")
-                                if state == "start":
-                                    log.info("🔊 开始播放回复")
-                                    stop_recording.set()
-                                    rec_proc.terminate()
-                                elif state == "sentence_start":
-                                    log.info(f"💬 {msg.get('text', '')}")
-                                elif state == "stop":
-                                    log.info("🔊 回复结束")
-                                    # 等音频播完
-                                    await asyncio.sleep(1)
-                                    tts_done.set()
-                                    return
+        # 发唤醒词检测消息
+        detect = {
+            "session_id": self.session_id,
+            "type": "listen",
+            "state": "detect",
+            "text": WAKE_WORD,
+        }
+        await self.ws.send(json.dumps(detect))
 
-                            elif msg_type == "stt":
-                                text = msg.get("text", "")
-                                log.info(f"🎤 识别: {text}")
-                                # 识别到文本后停止录音
-                                stop_recording.set()
-                                rec_proc.terminate()
+        # 发开始监听
+        start = {
+            "session_id": self.session_id,
+            "type": "listen",
+            "state": "start",
+            "mode": "auto",
+        }
+        await self.ws.send(json.dumps(start))
 
-                            elif msg_type == "llm":
-                                log.info(f"🤖 {msg.get('text', '')}")
+        # 开始录音发送
+        self.is_listening = True
+        self._send_task = asyncio.create_task(self._record_and_send())
 
-                except Exception as e:
-                    log.error(f"接收错误: {e}")
+    async def _record_and_send(self):
+        """录音并通过 WebSocket 发送 Opus 帧"""
+        frame_bytes = FRAME_SIZE * 2
+        self._rec_proc = subprocess.Popen(
+            ["arecord", "-D", AUDIO_REC, "-f", "S16_LE",
+             "-r", str(SAMPLE_RATE), "-c", "1", "-t", "raw", "-q"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+        )
+        loop = asyncio.get_event_loop()
+        log.info("🎙️ 录音中...")
+        try:
+            while self.is_listening and self.connected:
+                data = await loop.run_in_executor(None, self._rec_proc.stdout.read, frame_bytes)
+                if len(data) == frame_bytes:
+                    opus = pcm_to_opus(data)
+                    await self.ws.send(opus)
+        except Exception as e:
+            log.error(f"录音发送错误: {e}")
+        finally:
+            self._stop_recording()
 
-            # 并行: 发音频 + 收消息
-            send_task = asyncio.create_task(send_audio())
-            recv_task = asyncio.create_task(recv_messages())
-
-            # 超时保护
+    def _stop_recording(self):
+        self.is_listening = False
+        if self._rec_proc:
             try:
-                await asyncio.wait_for(tts_done.wait(), timeout=30)
-            except asyncio.TimeoutError:
-                log.warning("⏰ 对话超时")
+                self._rec_proc.terminate()
+            except Exception:
+                pass
+            self._rec_proc = None
 
-            # 清理
-            stop_recording.set()
-            rec_proc.terminate()
-            conversation_done.set()
-            send_task.cancel()
-            recv_task.cancel()
-
-            # 等播放线程结束
-            time.sleep(1)
-            log.info("✅ 对话结束")
-
-    except Exception as e:
-        log.error(f"对话错误: {e}")
+    async def stop_listening(self):
+        """停止录音"""
+        self._stop_recording()
+        if self._send_task:
+            self._send_task.cancel()
+        stop = {"session_id": self.session_id, "type": "listen", "state": "stop"}
+        try:
+            await self.ws.send(json.dumps(stop))
+        except Exception:
+            pass
+        log.info("🎙️ 停止录音")
 
 
 # ============================================================
 #  主程序
 # ============================================================
-def main():
-    parser = argparse.ArgumentParser(description="小智语音对话客户端 (老三)")
-    parser.add_argument("--ws", default="ws://192.168.0.69:8100/xiaozhi/v1/",
-                        help="小智 WebSocket 地址")
-    parser.add_argument("--play-device", default=AUDIO_PLAY, help="播放设备")
-    parser.add_argument("--rec-device", default=AUDIO_REC, help="录音设备")
-    args = parser.parse_args()
-
+async def main(ws_url: str):
     device_id = f"pi-{uuid.uuid4().hex[:8]}"
     log.info(f"设备ID: {device_id}")
 
-    # 启动语音
-    speak("乐迪上线了")
+    client = XiaozhiClient(ws_url, device_id)
+
+    # 连接
+    if not await client.connect():
+        log.error("连接失败，退出")
+        return
+
+    speak_async("悟空上线了")
 
     # 唤醒词监听
-    listener = WakeWordListener(device=args.rec_device)
+    listener = WakeWordListener()
+    loop = asyncio.get_event_loop()
 
     def on_wake():
         listener.pause()
-        speak("我在")
-        try:
-            asyncio.run(do_conversation(args.ws, device_id))
-        except Exception as e:
-            log.error(f"对话失败: {e}")
-        finally:
+        asyncio.run_coroutine_threadsafe(client.on_wake_word(), loop)
+        # 等服务端说完后恢复监听
+        def wait_and_resume():
+            time.sleep(2)  # 等唤醒处理
+            while client.is_listening or client.is_speaking:
+                time.sleep(0.5)
+            time.sleep(1)
             listener.resume()
-            log.info(f"👂 继续监听唤醒词: {WAKE_WORD}")
+            log.info(f"👂 继续监听: {WAKE_WORD}")
+        threading.Thread(target=wait_and_resume, daemon=True).start()
 
-    try:
-        listener.listen(on_wake)
-    except KeyboardInterrupt:
-        log.info("退出")
-        listener.stop()
+    listener.start(on_wake)
+
+    # 消息循环（保持长连接）
+    await client.message_loop()
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="小智语音对话客户端")
+    parser.add_argument("--ws", default="ws://192.168.0.69:8100/xiaozhi/v1/")
+    parser.add_argument("--play-device", default=AUDIO_PLAY)
+    parser.add_argument("--rec-device", default=AUDIO_REC)
+    args = parser.parse_args()
+
+    AUDIO_PLAY = args.play_device
+    AUDIO_REC = args.rec_device
+
+    asyncio.run(main(args.ws))
