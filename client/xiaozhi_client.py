@@ -108,7 +108,7 @@ class WakeWordListener:
                     result = json.loads(self.recognizer.Result())
                     text = result.get("text", "")
                     if text:
-                        log.debug(f"vosk: {text}")
+                        log.info(f"vosk: {text}")
                         if self.wake_word in text:
                             log.info(f"🎯 唤醒词检测到! ({text})")
                             on_wake()

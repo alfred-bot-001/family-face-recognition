@@ -135,6 +135,10 @@
                     <h2>📋 系统日志</h2>
                     <div class="log-panel" id="logPanel"></div>
                 </div>
+                <div class="card">
+                    <h2>🗣️ 小智对话 <span id="xiaozhiStatus" style="font-size:0.7em;color:#888">监听中</span></h2>
+                    <div class="log-panel" id="xiaozhiPanel" style="font-size:0.85em;color:#b0e0b0"></div>
+                </div>
             </div>
         </div>
     </div>
@@ -219,6 +223,33 @@
             updateVolUI();
             await fetch('/api/volume', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({volume:currentVol})});
         }
+        // 小智对话日志
+        const xiaozhiPanel = document.getElementById('xiaozhiPanel');
+        async function pollXiaozhi() {
+            try {
+                const r = await fetch('/api/xiaozhi/logs');
+                const d = await r.json();
+                xiaozhiPanel.innerHTML = d.lines
+                    .filter(l => l.includes('[INFO]') || l.includes('[ERROR]'))
+                    .map(l => {
+                        let cls = '';
+                        if (l.includes('唤醒') || l.includes('🎯')) cls = 'color:#ffeb3b';
+                        else if (l.includes('ERROR')) cls = 'color:#f44336';
+                        else if (l.includes('vosk:')) cls = 'color:#90caf9';
+                        else if (l.includes('🤖') || l.includes('💬')) cls = 'color:#a5d6a7';
+                        return `<div style="${cls}">${l.replace(/</g,'&lt;')}</div>`;
+                    }).join('');
+                xiaozhiPanel.scrollTop = xiaozhiPanel.scrollHeight;
+                // 状态
+                const last = d.lines[d.lines.length-1] || '';
+                const st = document.getElementById('xiaozhiStatus');
+                if (last.includes('监听唤醒词')) st.textContent = '👂 监听中';
+                else if (last.includes('开始对话')) st.textContent = '🎙️ 对话中';
+                else if (last.includes('对话结束')) st.textContent = '✅ 完成';
+            } catch(e) {}
+        }
+        setInterval(pollXiaozhi, 2000);
+        pollXiaozhi();
         fetchVol();
         setInterval(pollStatus, 800);
         setInterval(pollLogs, 2000);

@@ -636,6 +636,19 @@ def set_volume():
         return jsonify({"ok": False, "error": str(e)})
 
 
+@flask_app.route("/api/xiaozhi/logs")
+def xiaozhi_logs():
+    """读取小智客户端日志（最近 30 行）"""
+    import os
+    log_path = os.path.join(os.path.dirname(__file__), "xiaozhi.log")
+    try:
+        with open(log_path, "r") as f:
+            lines = f.readlines()[-30:]
+        return jsonify({"lines": [l.rstrip() for l in lines]})
+    except Exception:
+        return jsonify({"lines": ["小智客户端未运行"]})
+
+
 # ============================================================
 #  入口
 # ============================================================
