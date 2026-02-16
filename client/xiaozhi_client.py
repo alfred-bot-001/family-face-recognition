@@ -293,10 +293,6 @@ def main():
     parser.add_argument("--rec-device", default=AUDIO_REC, help="录音设备")
     args = parser.parse_args()
 
-    global AUDIO_PLAY, AUDIO_REC
-    AUDIO_PLAY = args.play_device
-    AUDIO_REC = args.rec_device
-
     device_id = f"pi-{uuid.uuid4().hex[:8]}"
     log.info(f"设备ID: {device_id}")
 
