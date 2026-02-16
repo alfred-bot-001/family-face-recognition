@@ -58,19 +58,32 @@ class VoiceGreeter:
         self.cooldown = cooldown
         self.last_greet_time: dict[str, float] = {}  # name -> 上次问候时间
         self.tts_lock = threading.Lock()
-        self.engine = None
+        self.available = False
         self._init_tts()
 
     def _init_tts(self):
-        """初始化 pyttsx3 TTS 引擎（与 ugv_rpi/audio_ctrl.py 一致）"""
+        """检测 espeak + USB 音频设备"""
+        import subprocess, shutil
+        if not shutil.which("espeak"):
+            print("[语音] espeak 未安装，语音不可用")
+            return
+        # 检测 USB 音频设备
         try:
-            import pyttsx3
-            self.engine = pyttsx3.init()
-            self.engine.setProperty("rate", 180)  # 语速
-            print("[语音] TTS 引擎已初始化")
+            out = subprocess.check_output(["aplay", "-l"], stderr=subprocess.STDOUT).decode()
+            # 找 USB Audio 设备
+            self.audio_device = None
+            for line in out.split("\n"):
+                if "USB" in line and "card" in line:
+                    card_num = line.split("card ")[1].split(":")[0]
+                    self.audio_device = f"plughw:{card_num},0"
+                    break
+            if self.audio_device:
+                self.available = True
+                print(f"[语音] espeak + USB 音频已就绪 ({self.audio_device})")
+            else:
+                print("[语音] 未找到 USB 音频设备")
         except Exception as e:
-            self.engine = None
-            print(f"[语音] TTS 初始化失败: {e}")
+            print(f"[语音] 音频检测失败: {e}")
 
     def should_greet(self, name: str) -> bool:
         """判断是否需要问候（冷却时间外）"""
@@ -81,7 +94,7 @@ class VoiceGreeter:
 
     def greet(self, name: str):
         """异步播放问候语音"""
-        if not self.engine:
+        if not self.available:
             return
         if not self.should_greet(name):
             return
@@ -92,12 +105,28 @@ class VoiceGreeter:
 
         threading.Thread(target=self._speak, args=(msg,), daemon=True).start()
 
+    def speak(self, text: str):
+        """公开的语音播放接口"""
+        if not self.available:
+            return
+        threading.Thread(target=self._speak, args=(text,), daemon=True).start()
+
     def _speak(self, text: str):
-        """TTS 播放（线程安全）"""
+        """espeak TTS 播放（线程安全）"""
+        import subprocess
         with self.tts_lock:
             try:
-                self.engine.say(text)
-                self.engine.runAndWait()
+                # espeak 输出 wav → aplay 播放到 USB 音频
+                proc = subprocess.Popen(
+                    ["espeak", "-v", "zh", "-s", "160", "--stdout", text],
+                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                )
+                subprocess.run(
+                    ["aplay", "-D", self.audio_device, "-q"],
+                    stdin=proc.stdout, stderr=subprocess.DEVNULL,
+                    timeout=10,
+                )
+                proc.wait()
             except Exception as e:
                 add_log("ERROR", f"语音播放失败: {e}")
 
@@ -110,7 +139,7 @@ class VoiceGreeter:
 
     def on_wave(self, faces: list[dict]):
         """检测到挥手时触发：向当前跟踪的人问好，或通用问候"""
-        if not self.engine:
+        if not self.available:
             return
         now = time.time()
         if now - self.last_greet_time.get("_wave_", 0) < WAVE_GREET_COOLDOWN:
@@ -653,6 +682,10 @@ def main():
 
     # 初始化手势检测（本地 MediaPipe）
     gesture_instance = GestureDetector(log_func=add_log)
+
+    # 启动语音：我上线了
+    greeter_instance.speak("我上线了！")
+    add_log("INFO", "🔊 启动语音: 我上线了！")
 
     # 启动摄像头+跟踪线程
     cam_thread = threading.Thread(
