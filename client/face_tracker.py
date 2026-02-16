@@ -134,15 +134,16 @@ class VoiceGreeter:
                 add_log("ERROR", f"语音播放失败: {e}")
 
     def _find_mic_device(self) -> str | None:
-        """查找录音设备（USB 音频优先）"""
+        """查找录音设备（USB Camera 麦克风优先）"""
         import subprocess
         try:
             out = subprocess.check_output(["arecord", "-l"], stderr=subprocess.STDOUT).decode()
+            # 优先用 Camera 自带麦克风
             for line in out.split("\n"):
-                if "USB" in line and "card" in line and "Camera" not in line:
+                if "Camera" in line and "card" in line:
                     card_num = line.split("card ")[1].split(":")[0]
                     return f"plughw:{card_num},0"
-            # 没有非 Camera 的 USB 设备，用第一个 USB
+            # 其次用其他 USB 音频
             for line in out.split("\n"):
                 if "USB" in line and "card" in line:
                     card_num = line.split("card ")[1].split(":")[0]
@@ -605,7 +606,7 @@ def camera_tracking_loop(api_url: str, camera_id: int, width: int, height: int,
             gesture = gesture_det.detect(frame)
             if gesture.get("wave_detected") or gesture.get("gesture") == "open_palm":
                 greeter.on_wave(latest_results)
-            elif gesture.get("gesture") == "fist":
+            elif gesture.get("gesture") == "peace":
                 greeter.on_fist()
         else:
             gesture = {"hands_count": 0, "gesture": "none", "wave_detected": False}
