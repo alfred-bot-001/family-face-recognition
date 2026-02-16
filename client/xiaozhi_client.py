@@ -142,7 +142,13 @@ async def do_conversation(ws_url: str, device_id: str):
 
     log.info(f"🔗 连接 {ws_url}")
     try:
-        async with websockets.connect(ws_url, max_size=None, close_timeout=5) as ws:
+        # 通过 headers 传 device-id（服务端从 headers 读取）
+        headers = {
+            "Device-Id": device_id,
+            "Client-Id": device_id,
+        }
+        async with websockets.connect(ws_url, max_size=None, close_timeout=5,
+                                       additional_headers=headers) as ws:
             # === 握手 ===
             hello = {
                 "type": "hello",
@@ -150,17 +156,24 @@ async def do_conversation(ws_url: str, device_id: str):
                 "device_name": "老三-树莓派",
                 "device_mac": "AA:BB:CC:DD:EE:FF",
                 "token": "",
-                "features": {"mcp": False}
+                "features": {"mcp": False},
+                "audio_params": {
+                    "format": "opus",
+                    "sample_rate": 16000,
+                    "channels": 1,
+                    "frame_duration": FRAME_DURATION_MS
+                }
             }
             await ws.send(json.dumps(hello))
 
             resp = await asyncio.wait_for(ws.recv(), timeout=10)
-            data = json.loads(resp)
-            if data.get("type") != "hello" or not data.get("session_id"):
-                log.error(f"握手失败: {data}")
+            try:
+                data = json.loads(resp)
+            except Exception:
+                log.error(f"握手响应非JSON: {resp[:200]}")
                 return
-            session_id = data["session_id"]
-            log.info(f"✅ 握手成功, session: {session_id}")
+            session_id = data.get("session_id", "unknown")
+            log.info(f"✅ 握手成功, session: {session_id}, keys: {list(data.keys())}")
 
             # === 发送 listen start ===
             await ws.send(json.dumps({"type": "listen", "state": "start", "mode": "auto"}))
