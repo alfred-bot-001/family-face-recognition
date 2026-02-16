@@ -121,8 +121,12 @@ class WakeWordListener:
         chunk_samples = int(SAMPLE_RATE * 0.1)  # 100ms
         chunk_bytes = chunk_samples * 2
         last_text = ""
+        read_count = 0
         while self.active and self._proc.poll() is None:
             data = self._proc.stdout.read(chunk_bytes)
+            read_count += 1
+            if read_count % 100 == 0:  # 每10秒打印一次
+                log.info(f"[debug] audio chunks read: {read_count}, paused={self.paused}")
             if not data or self.paused:
                 if self.paused:
                     time.sleep(0.1)
