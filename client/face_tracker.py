@@ -600,12 +600,15 @@ def camera_tracking_loop(api_url: str, camera_id: int, width: int, height: int,
 
         now = time.time()
 
-        # 本地手势检测（每帧都做，不依赖 API）
-        gesture = gesture_det.detect(frame)
-        if gesture.get("wave_detected") or gesture.get("gesture") == "open_palm":
-            greeter.on_wave(latest_results)
-        elif gesture.get("gesture") == "fist":
-            greeter.on_fist()
+        # 本地手势检测（启动 5 秒后开始，避免误触发）
+        if frame_count > fps_limit * 5:
+            gesture = gesture_det.detect(frame)
+            if gesture.get("wave_detected") or gesture.get("gesture") == "open_palm":
+                greeter.on_wave(latest_results)
+            elif gesture.get("gesture") == "fist":
+                greeter.on_fist()
+        else:
+            gesture = {"hands_count": 0, "gesture": "none", "wave_detected": False}
 
         # 非识别帧：用上次结果更新显示
         if now - last_send < frame_interval:
