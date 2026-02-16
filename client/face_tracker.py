@@ -311,6 +311,7 @@ class FaceTracker:
 # ============================================================
 
 from flask import Flask, Response, jsonify, send_from_directory
+from gesture_detector import GestureDetector
 
 # 全局状态
 latest_frame: np.ndarray | None = None
@@ -431,8 +432,8 @@ def make_placeholder_frame(width: int, height: int, text: str = "摄像头未连
 
 def camera_tracking_loop(api_url: str, camera_id: int, width: int, height: int,
                          fps_limit: int, gimbal: GimbalController,
-                         greeter: VoiceGreeter):
-    """主循环：摄像头 → API → 跟踪 → 舵机 → 语音"""
+                         greeter: VoiceGreeter, gesture_det: GestureDetector):
+    """主循环：摄像头 → API → 跟踪 → 舵机 → 手势 → 语音"""
     global latest_frame, latest_results, tracker_status, is_running
 
     tracker = FaceTracker(api_url, gimbal, width, height)
@@ -480,10 +481,16 @@ def camera_tracking_loop(api_url: str, camera_id: int, width: int, height: int,
 
         now = time.time()
 
+        # 本地手势检测（每帧都做，不依赖 API）
+        gesture = gesture_det.detect(frame)
+        if gesture.get("wave_detected"):
+            greeter.on_wave(latest_results)
+
         # 非识别帧：用上次结果更新显示
         if now - last_send < frame_interval:
             with lock:
                 latest_frame = draw_tracking_results(frame, latest_results, tracker.tracking_name)
+                tracker_status["gesture"] = gesture
             continue
 
         last_send = now
@@ -510,11 +517,6 @@ def camera_tracking_loop(api_url: str, camera_id: int, width: int, height: int,
                 # 语音问候
                 greeter.check_faces(faces)
 
-                # 挥手检测
-                gesture = data.get("gesture", {})
-                if gesture.get("wave_detected"):
-                    greeter.on_wave(faces)
-
                 with lock:
                     latest_results = faces
                     latest_frame = draw_tracking_results(frame, faces, tracker.tracking_name)
@@ -530,7 +532,7 @@ def camera_tracking_loop(api_url: str, camera_id: int, width: int, height: int,
                         "api_err": api_err_count,
                         "greet_history": {k: time.strftime("%H:%M:%S", time.localtime(v))
                                           for k, v in greeter.last_greet_time.items()},
-                        "gesture": gesture,
+                        "gesture": gesture,  # 本地手势检测结果
                     }
             else:
                 api_err_count += 1
@@ -649,11 +651,14 @@ def main():
     # 初始化语音问候
     greeter_instance = VoiceGreeter(cooldown=GREET_COOLDOWN)
 
+    # 初始化手势检测（本地 MediaPipe）
+    gesture_instance = GestureDetector(log_func=add_log)
+
     # 启动摄像头+跟踪线程
     cam_thread = threading.Thread(
         target=camera_tracking_loop,
         args=(args.api, args.camera, args.width, args.height, args.fps,
-              gimbal_instance, greeter_instance),
+              gimbal_instance, greeter_instance, gesture_instance),
         daemon=True,
     )
     cam_thread.start()
