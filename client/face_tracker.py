@@ -28,18 +28,14 @@ DEFAULT_BAUD = 115200
 PRIORITY_NAMES = ["son", "max", "wife"]
 
 # 语音问候配置（人出现后冷却时间内不重复问候）
-GREET_COOLDOWN = 300  # 秒（5分钟）
+GREET_COOLDOWN = 999999  # 每次重启只问候一次
 GREET_MESSAGES = {
     "son":  "你好，小虎！",
     "max":  "老大好！",
     "wife": "嫂子好！",
 }
 GREET_DEFAULT = "你好！"  # 未知已知人脸的默认问候
-WAVE_GREET_COOLDOWN = 10  # 挥手问候冷却（秒，比普通问候短）
-WAVE_GREET_MSG = "你好呀！我看到你在挥手！"  # 挥手时的默认问候
-FIST_COOLDOWN = 20        # 握拳录音冷却（秒）
-RECORD_DURATION = 15      # 录音时长（秒）
-RECORD_FILE = "/tmp/face_tracker_record.wav"
+WAVE_GREET_COOLDOWN = 10  # 手势问候冷却（秒）
 
 # 舵机参数（与 ugv_rpi/cv_ctrl.py 机械限位一致）
 PAN_MIN, PAN_MAX = -180, 180      # 水平范围
@@ -133,94 +129,6 @@ class VoiceGreeter:
             except Exception as e:
                 add_log("ERROR", f"语音播放失败: {e}")
 
-    def _find_mic_device(self) -> str | None:
-        """查找录音设备（USB Camera 麦克风优先）"""
-        import subprocess
-        try:
-            out = subprocess.check_output(["arecord", "-l"], stderr=subprocess.STDOUT).decode()
-            # 优先用 Camera 自带麦克风
-            for line in out.split("\n"):
-                if "Camera" in line and "card" in line:
-                    card_num = line.split("card ")[1].split(":")[0]
-                    return f"plughw:{card_num},0"
-            # 其次用其他 USB 音频
-            for line in out.split("\n"):
-                if "USB" in line and "card" in line:
-                    card_num = line.split("card ")[1].split(":")[0]
-                    return f"plughw:{card_num},0"
-        except Exception:
-            pass
-        return None
-
-    def on_fist(self):
-        """握拳触发：提示 → 录音 → 播放"""
-        if not self.available:
-            return
-        now = time.time()
-        if now - self.last_greet_time.get("_fist_", 0) < FIST_COOLDOWN:
-            return
-        self.last_greet_time["_fist_"] = now
-
-        mic = self._find_mic_device()
-        if not mic:
-            add_log("ERROR", "未找到麦克风设备")
-            return
-
-        add_log("INFO", f"✊ 握拳检测！开始录音 {RECORD_DURATION}秒 (mic: {mic})")
-        threading.Thread(target=self._record_and_play, args=(mic,), daemon=True).start()
-
-    def _record_and_play(self, mic_device: str):
-        """录音然后播放"""
-        import subprocess
-        with self.tts_lock:
-            try:
-                # 1. 说"请开始说话"
-                self._speak_sync("请开始说话")
-                time.sleep(0.3)
-
-                # 2. 录音
-                add_log("INFO", f"🎙️ 录音中... ({RECORD_DURATION}秒)")
-                subprocess.run(
-                    ["arecord", "-D", mic_device, "-f", "S16_LE",
-                     "-r", "16000", "-c", "1",
-                     "-d", str(RECORD_DURATION),
-                     RECORD_FILE],
-                    stderr=subprocess.DEVNULL,
-                    timeout=RECORD_DURATION + 5,
-                )
-
-                # 3. 说"录音结束，现在播放"
-                add_log("INFO", "🎙️ 录音完成，播放中...")
-                self._speak_sync("录音结束，现在播放")
-                time.sleep(0.3)
-
-                # 4. 播放录音
-                subprocess.run(
-                    ["aplay", "-D", self.audio_device, "-q", RECORD_FILE],
-                    stderr=subprocess.DEVNULL,
-                    timeout=RECORD_DURATION + 5,
-                )
-                add_log("INFO", "✅ 播放完成")
-            except Exception as e:
-                add_log("ERROR", f"录音/播放失败: {e}")
-
-    def _speak_sync(self, text: str):
-        """同步语音（不加锁，供内部使用）"""
-        import subprocess
-        try:
-            proc = subprocess.Popen(
-                ["espeak", "-v", "zh", "-s", "320", "--stdout", text],
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            )
-            subprocess.run(
-                ["aplay", "-D", self.audio_device, "-q"],
-                stdin=proc.stdout, stderr=subprocess.DEVNULL,
-                timeout=10,
-            )
-            proc.wait()
-        except Exception as e:
-            add_log("ERROR", f"语音失败: {e}")
-
     def check_faces(self, faces: list[dict]):
         """检查所有识别到的人脸，触发问候"""
         for face in faces:
@@ -228,35 +136,6 @@ class VoiceGreeter:
             if name != "unknown":
                 self.greet(name)
 
-    def on_wave(self, faces: list[dict]):
-        """检测到挥手时触发：向当前跟踪的人问好，或通用问候"""
-        if not self.available:
-            return
-        now = time.time()
-        if now - self.last_greet_time.get("_wave_", 0) < WAVE_GREET_COOLDOWN:
-            return
-
-        self.last_greet_time["_wave_"] = now
-
-        # 找当前识别到的已知人脸
-        known = [f for f in faces if f.get("name", "unknown") != "unknown"]
-        if known:
-            # 向优先级最高的人打招呼
-            for priority_name in PRIORITY_NAMES:
-                for f in known:
-                    if f["name"] == priority_name:
-                        msg = GREET_MESSAGES.get(priority_name, GREET_DEFAULT)
-                        add_log("INFO", f"👋 检测到挥手！向 {priority_name} 打招呼: {msg}")
-                        threading.Thread(target=self._speak, args=(msg,), daemon=True).start()
-                        return
-            # 没有优先目标，向第一个已知的人问好
-            name = known[0]["name"]
-            msg = GREET_MESSAGES.get(name, GREET_DEFAULT)
-            add_log("INFO", f"👋 检测到挥手！向 {name} 打招呼: {msg}")
-            threading.Thread(target=self._speak, args=(msg,), daemon=True).start()
-        else:
-            add_log("INFO", f"👋 检测到挥手！{WAVE_GREET_MSG}")
-            threading.Thread(target=self._speak, args=(WAVE_GREET_MSG,), daemon=True).start()
 
 
 # ============================================================
@@ -604,10 +483,6 @@ def camera_tracking_loop(api_url: str, camera_id: int, width: int, height: int,
         # 本地手势检测（启动 5 秒后开始，避免误触发）
         if frame_count > fps_limit * 5:
             gesture = gesture_det.detect(frame)
-            if gesture.get("wave_detected") or gesture.get("gesture") == "open_palm":
-                greeter.on_wave(latest_results)
-            elif gesture.get("gesture") == "peace":
-                greeter.on_fist()
         else:
             gesture = {"hands_count": 0, "gesture": "none", "wave_detected": False}
 
