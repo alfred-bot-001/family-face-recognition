@@ -270,9 +270,35 @@ def draw_tracking_results(frame: np.ndarray, faces: list[dict],
     return annotated
 
 
+def usb_camera_detection() -> bool:
+    """检测 USB 摄像头是否连接（与 ugv_rpi 一致）"""
+    import subprocess
+    try:
+        output = subprocess.check_output(["lsusb"]).decode("utf-8")
+        return "Camera" in output
+    except Exception:
+        return False
+
+
 def open_camera(camera_id: int, width: int, height: int):
-    """尝试打开摄像头：优先 picamera2 (CSI)，其次 OpenCV (USB)"""
-    # 尝试 picamera2
+    """
+    尝试打开摄像头（参考 ugv_rpi/cv_ctrl.py 的检测顺序）：
+    1. USB 摄像头 (lsusb 检测 + OpenCV)
+    2. CSI 摄像头 (picamera2)
+    """
+    # 1. 检测 USB 摄像头
+    if usb_camera_detection():
+        cap = cv2.VideoCapture(camera_id)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        if cap.isOpened():
+            add_log("INFO", f"USB 摄像头已打开 ({width}x{height})")
+            return ("opencv", cap)
+        else:
+            cap.release()
+            add_log("WARN", "检测到 USB 摄像头但 VideoCapture 打开失败")
+
+    # 2. 尝试 CSI 摄像头 (picamera2)
     try:
         from picamera2 import Picamera2
         cam = Picamera2()
@@ -282,36 +308,31 @@ def open_camera(camera_id: int, width: int, height: int):
         cam.configure(config)
         cam.start()
         time.sleep(0.5)
-        print(f"[摄像头] picamera2 CSI 已打开 ({width}x{height})")
+        add_log("INFO", f"CSI 摄像头已打开 (picamera2, {width}x{height})")
         return ("picamera2", cam)
     except Exception as e:
-        print(f"[摄像头] picamera2 失败: {e}")
+        add_log("WARN", f"CSI 摄像头失败: {e}")
 
-    # 尝试 OpenCV USB
-    cap = cv2.VideoCapture(camera_id)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-    if cap.isOpened():
-        print(f"[摄像头] OpenCV USB 已打开 ({width}x{height})")
-        return ("opencv", cap)
-
-    print(f"[错误] 无法打开任何摄像头")
+    add_log("ERROR", "无法打开任何摄像头 (USB/CSI 均失败)")
     return (None, None)
 
 
 def read_frame(cam_type, cam_obj):
     """从摄像头读取一帧，返回 BGR numpy 数组"""
-    if cam_type == "picamera2":
-        arr = cam_obj.capture_array()
-        # XRGB8888 → BGR
-        if arr.ndim == 3 and arr.shape[2] == 4:
-            return cv2.cvtColor(arr, cv2.COLOR_RGBA2BGR)
-        elif arr.ndim == 3 and arr.shape[2] == 3:
-            return cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
-        return arr
-    elif cam_type == "opencv":
-        ret, frame = cam_obj.read()
-        return frame if ret else None
+    try:
+        if cam_type == "picamera2":
+            arr = cam_obj.capture_array()
+            # XRGB8888 → BGR
+            if arr.ndim == 3 and arr.shape[2] == 4:
+                return cv2.cvtColor(arr, cv2.COLOR_RGBA2BGR)
+            elif arr.ndim == 3 and arr.shape[2] == 3:
+                return cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+            return arr
+        elif cam_type == "opencv":
+            ret, frame = cam_obj.read()
+            return frame if ret else None
+    except Exception as e:
+        add_log("ERROR", f"读取帧异常: {e}")
     return None
 
 
@@ -324,7 +345,21 @@ def close_camera(cam_type, cam_obj):
         elif cam_type == "opencv":
             cam_obj.release()
     except Exception as e:
-        print(f"[摄像头] 关闭异常: {e}")
+        add_log("WARN", f"关闭摄像头异常: {e}")
+
+
+def make_placeholder_frame(width: int, height: int, text: str = "摄像头未连接") -> np.ndarray:
+    """生成占位图（参考 ugv_rpi 的 camera read failed 画面）"""
+    frame = np.zeros((height, width, 3), dtype=np.uint8)
+    frame[:] = (30, 30, 30)
+    # 中心文字
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = 0.7
+    (tw, th), _ = cv2.getTextSize(text, font, scale, 2)
+    x = (width - tw) // 2
+    y = (height + th) // 2
+    cv2.putText(frame, text, (x, y), font, scale, (0, 0, 255), 2)
+    return frame
 
 
 def camera_tracking_loop(api_url: str, camera_id: int, width: int, height: int,
@@ -335,26 +370,42 @@ def camera_tracking_loop(api_url: str, camera_id: int, width: int, height: int,
     tracker = FaceTracker(api_url, gimbal, width, height)
 
     cam_type, cam_obj = open_camera(camera_id, width, height)
-    if cam_type is None:
-        add_log("ERROR", "无法打开任何摄像头，退出")
-        is_running = False
-        return
-
-    add_log("INFO", f"摄像头已打开: {cam_type} ({width}x{height})")
+    retry_interval = 5  # 摄像头重试间隔（秒）
+    last_retry = 0
     frame_interval = 1.0 / fps_limit
     last_send = 0
     frame_count = 0
     api_ok_count = 0
     api_err_count = 0
+    read_fail_count = 0
 
     while is_running:
+        # 没有摄像头时：显示占位图 + 定期重试
+        if cam_type is None:
+            with lock:
+                latest_frame = make_placeholder_frame(width, height, "Camera Disconnected - Retrying...")
+            now = time.time()
+            if now - last_retry > retry_interval:
+                last_retry = now
+                add_log("INFO", "尝试重新连接摄像头...")
+                cam_type, cam_obj = open_camera(camera_id, width, height)
+            time.sleep(0.2)
+            continue
+
         frame = read_frame(cam_type, cam_obj)
         if frame is None:
-            if frame_count == 0:
-                add_log("ERROR", "读取第一帧失败")
+            read_fail_count += 1
+            if read_fail_count == 1:
+                add_log("WARN", "读取帧失败，尝试中...")
+            if read_fail_count > 30:
+                add_log("ERROR", f"连续 {read_fail_count} 次读取失败，重新打开摄像头")
+                close_camera(cam_type, cam_obj)
+                cam_type, cam_obj = None, None
+                read_fail_count = 0
             time.sleep(0.1)
             continue
 
+        read_fail_count = 0
         frame_count += 1
         if frame_count == 1:
             add_log("INFO", f"首帧获取成功: {frame.shape}")
