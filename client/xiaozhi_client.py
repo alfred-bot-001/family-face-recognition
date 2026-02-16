@@ -222,11 +222,14 @@ class XiaozhiClient:
             async for message in self.ws:
                 if isinstance(message, bytes):
                     # Opus 音频 → 解码播放
+                    self._audio_count = getattr(self, '_audio_count', 0) + 1
+                    if self._audio_count <= 3 or self._audio_count % 50 == 0:
+                        log.info(f"🔈 收到音频帧 #{self._audio_count}, {len(message)} bytes")
                     try:
                         pcm = opus_to_pcm(message)
                         self._play_pcm(pcm)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log.error(f"音频解码/播放错误: {e}")
                 else:
                     data = json.loads(message)
                     await self._handle(data)
@@ -258,14 +261,19 @@ class XiaozhiClient:
         """直接写入 aplay 进程"""
         try:
             if self._play_proc is None or self._play_proc.poll() is not None:
+                log.info(f"🔊 启动 aplay 进程 (设备: {AUDIO_PLAY}, 采样率: {SAMPLE_RATE})")
                 self._play_proc = subprocess.Popen(
                     ["aplay", "-D", AUDIO_PLAY, "-f", "S16_LE",
                      "-r", str(SAMPLE_RATE), "-c", "1", "-q"],
-                    stdin=subprocess.PIPE, stderr=subprocess.DEVNULL
+                    stdin=subprocess.PIPE, stderr=subprocess.PIPE
                 )
             self._play_proc.stdin.write(pcm)
             self._play_proc.stdin.flush()
-        except Exception:
+        except Exception as e:
+            log.error(f"播放错误: {e}")
+            if self._play_proc:
+                err = self._play_proc.stderr.read(200) if self._play_proc.stderr else b""
+                log.error(f"aplay stderr: {err}")
             self._play_proc = None
 
     async def on_wake_word(self):
