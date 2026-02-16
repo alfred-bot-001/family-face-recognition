@@ -31,9 +31,17 @@ FRAME_SIZE = SAMPLE_RATE * FRAME_DURATION_MS // 1000  # 960
 AUDIO_PLAY = "plughw:3,0"
 AUDIO_REC = "plughw:2,0"
 WAKE_WORD = "乐迪"
-# sherpa-onnx 常见误识别变体
-# (唤醒词检测已改用 KWS，无需模糊匹配)
-SHERPA_KWS_DIR = os.path.join(os.path.dirname(__file__), "models", "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20")
+SHERPA_ASR_DIR = os.path.join(os.path.dirname(__file__), "models", "sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16", "96")
+
+def _contains_wake(text):
+    """模糊匹配唤醒词 — 检查两字组合是否听起来像目标唤醒词"""
+    # "乐迪" 的声母韵母相似字
+    first_chars = set("乐勒了落洛罗热")   # l/r 开头
+    second_chars = set("迪的地低底笛滴敌弟提")  # di/ti 韵母
+    for i in range(len(text) - 1):
+        if text[i] in first_chars and text[i+1] in second_chars:
+            return True
+    return False
 
 # ============================================================
 #  Opus
@@ -61,43 +69,36 @@ def speak_async(text: str):
     threading.Thread(target=speak, args=(text,), daemon=True).start()
 
 # ============================================================
-#  唤醒词检测 (sherpa-onnx KeywordSpotter)
+#  唤醒词检测 (sherpa-onnx 流式ASR + 模糊匹配)
 # ============================================================
 class WakeWordListener:
     def __init__(self, device=AUDIO_REC):
         import sherpa_onnx
         import numpy as np
+        self.sherpa_onnx = sherpa_onnx
         self.np = np
         self.device = device
         self.paused = False
         self.active = True
         self._proc = None
-        self._cooldown = 1.5
+        self._cooldown = 2.0
         self._last_detect = 0
 
-        encoder = os.path.join(SHERPA_KWS_DIR, "encoder-epoch-13-avg-2-chunk-16-left-64.int8.onnx")
-        decoder = os.path.join(SHERPA_KWS_DIR, "decoder-epoch-13-avg-2-chunk-16-left-64.onnx")
-        joiner = os.path.join(SHERPA_KWS_DIR, "joiner-epoch-13-avg-2-chunk-16-left-64.int8.onnx")
-        tokens = os.path.join(SHERPA_KWS_DIR, "tokens.txt")
-        keywords = os.path.join(SHERPA_KWS_DIR, "keywords.txt")
+        encoder = os.path.join(SHERPA_ASR_DIR, "encoder-epoch-99-avg-1.int8.onnx")
+        decoder = os.path.join(SHERPA_ASR_DIR, "decoder-epoch-99-avg-1.int8.onnx")
+        joiner = os.path.join(SHERPA_ASR_DIR, "joiner-epoch-99-avg-1.int8.onnx")
+        tokens = os.path.join(SHERPA_ASR_DIR, "tokens.txt")
 
-        log.info(f"加载 sherpa-onnx KWS: {SHERPA_KWS_DIR}")
-        self.kws = sherpa_onnx.KeywordSpotter(
-            encoder=encoder,
-            decoder=decoder,
-            joiner=joiner,
-            tokens=tokens,
-            keywords_file=keywords,
-            num_threads=4,
-            sample_rate=SAMPLE_RATE,
-            feature_dim=80,
-            max_active_paths=2,
-            keywords_score=1.8,
-            keywords_threshold=0.2,
-            num_trailing_blanks=1,
-            provider="cpu",
+        log.info(f"加载 sherpa-onnx 流式ASR: {SHERPA_ASR_DIR}")
+        self.recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
+            encoder=encoder, decoder=decoder, joiner=joiner, tokens=tokens,
+            num_threads=4, sample_rate=SAMPLE_RATE, feature_dim=80, provider="cpu",
+            enable_endpoint_detection=True,
+            rule1_min_trailing_silence=2.4,
+            rule2_min_trailing_silence=1.2,
+            rule3_min_utterance_length=300,
         )
-        log.info("sherpa-onnx KWS 加载完成")
+        log.info("sherpa-onnx 流式ASR 加载完成")
 
     def start(self, on_wake):
         threading.Thread(target=self._listen, args=(on_wake,), daemon=True).start()
@@ -106,6 +107,7 @@ class WakeWordListener:
         chunk_samples = int(SAMPLE_RATE * 0.1)  # 100ms
         chunk_bytes = chunk_samples * 2
         read_count = 0
+        last_text = ""
 
         while self.active:
             # 等待非暂停状态
@@ -120,7 +122,8 @@ class WakeWordListener:
                      "-r", str(SAMPLE_RATE), "-c", "1", "-t", "raw", "-q"],
                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
                 )
-                stream = self.kws.create_stream()
+                stream = self.recognizer.create_stream()
+                last_text = ""
                 log.info(f"👂 监听唤醒词: {WAKE_WORD}")
 
             data = self._proc.stdout.read(chunk_bytes)
@@ -137,19 +140,29 @@ class WakeWordListener:
 
             samples = self.np.frombuffer(data, dtype=self.np.int16).astype(self.np.float32) / 32768.0
             stream.accept_waveform(SAMPLE_RATE, samples)
-            while self.kws.is_ready(stream):
-                self.kws.decode_stream(stream)
-            result = self.kws.get_result(stream)
-            if result:
-                log.info(f"KWS 检测到: {result}")
-                self._trigger(on_wake, result)
+            while self.recognizer.is_ready(stream):
+                self.recognizer.decode_stream(stream)
+            text = self.recognizer.get_result(stream).strip()
+            if text and text != last_text:
+                log.info(f"asr: {text}")
+                last_text = text
+                if _contains_wake(text):
+                    self._trigger(on_wake, text, stream)
+            if self.recognizer.is_endpoint(stream):
+                if text:
+                    log.info(f"asr final: {text}")
+                    if _contains_wake(text):
+                        self._trigger(on_wake, text, stream)
+                self.recognizer.reset(stream)
+                last_text = ""
 
-    def _trigger(self, on_wake, result):
+    def _trigger(self, on_wake, text, stream):
         now = time.time()
         if now - self._last_detect < self._cooldown:
             return
         self._last_detect = now
-        log.info(f"🎯 唤醒词!")
+        log.info(f"🎯 唤醒词! ({text})")
+        self.recognizer.reset(stream)
         on_wake()
 
     def pause(self):
