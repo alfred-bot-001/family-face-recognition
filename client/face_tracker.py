@@ -90,9 +90,9 @@ class GimbalController:
         distance = math.sqrt((target_x - frame_cx) ** 2 + (frame_cy - target_y) ** 2)
 
         with self.lock:
-            # 计算角度增量（注意方向）
-            self.pan_angle += (frame_cx - target_x) * iterate
-            self.tilt_angle += (target_y - frame_cy) * iterate
+            # 计算角度增量（与 ugv_rpi/cv_ctrl.py gimbal_track 一致）
+            self.pan_angle += (target_x - frame_cx) * iterate
+            self.tilt_angle += (frame_cy - target_y) * iterate
 
             # 限幅
             self.pan_angle = max(PAN_MIN, min(PAN_MAX, self.pan_angle))
