@@ -270,67 +270,35 @@ def draw_tracking_results(frame: np.ndarray, faces: list[dict],
     return annotated
 
 
-def usb_camera_detection() -> bool:
-    """检测 USB 摄像头是否连接（与 ugv_rpi 一致）"""
-    import subprocess
-    try:
-        output = subprocess.check_output(["lsusb"]).decode("utf-8")
-        return "Camera" in output
-    except Exception:
-        return False
-
-
 def open_camera(camera_id: int, width: int, height: int):
     """
-    尝试打开摄像头（参考 ugv_rpi/cv_ctrl.py 的检测顺序）：
-    1. USB 摄像头 (lsusb 检测 + OpenCV)
-    2. CSI 摄像头 (picamera2)
+    打开摄像头（OpenCV 统一处理 USB 和 CSI）
+    RPi5 上 OpenCV 通过 V4L2/GStreamer 可直接访问 CSI 摄像头
     """
-    # 1. 检测 USB 摄像头
-    if usb_camera_detection():
-        cap = cv2.VideoCapture(camera_id)
+    cap = cv2.VideoCapture(camera_id)
+    if cap.isOpened():
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        if cap.isOpened():
-            add_log("INFO", f"USB 摄像头已打开 ({width}x{height})")
+        ret, frame = cap.read()
+        if ret:
+            actual_h, actual_w = frame.shape[:2]
+            add_log("INFO", f"摄像头已打开: /dev/video{camera_id} ({actual_w}x{actual_h})")
             return ("opencv", cap)
         else:
             cap.release()
-            add_log("WARN", "检测到 USB 摄像头但 VideoCapture 打开失败")
+            add_log("WARN", f"摄像头 {camera_id} 打开成功但读取失败")
+    else:
+        add_log("WARN", f"摄像头 {camera_id} 无法打开")
 
-    # 2. 尝试 CSI 摄像头 (picamera2)
-    try:
-        from picamera2 import Picamera2
-        cam = Picamera2()
-        config = cam.create_video_configuration(
-            main={"format": "XRGB8888", "size": (width, height)}
-        )
-        cam.configure(config)
-        cam.start()
-        time.sleep(0.5)
-        add_log("INFO", f"CSI 摄像头已打开 (picamera2, {width}x{height})")
-        return ("picamera2", cam)
-    except Exception as e:
-        add_log("WARN", f"CSI 摄像头失败: {e}")
-
-    add_log("ERROR", "无法打开任何摄像头 (USB/CSI 均失败)")
+    add_log("ERROR", "无法打开摄像头")
     return (None, None)
 
 
 def read_frame(cam_type, cam_obj):
     """从摄像头读取一帧，返回 BGR numpy 数组"""
     try:
-        if cam_type == "picamera2":
-            arr = cam_obj.capture_array()
-            # XRGB8888 → BGR
-            if arr.ndim == 3 and arr.shape[2] == 4:
-                return cv2.cvtColor(arr, cv2.COLOR_RGBA2BGR)
-            elif arr.ndim == 3 and arr.shape[2] == 3:
-                return cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
-            return arr
-        elif cam_type == "opencv":
-            ret, frame = cam_obj.read()
-            return frame if ret else None
+        ret, frame = cam_obj.read()
+        return frame if ret else None
     except Exception as e:
         add_log("ERROR", f"读取帧异常: {e}")
     return None
@@ -339,11 +307,7 @@ def read_frame(cam_type, cam_obj):
 def close_camera(cam_type, cam_obj):
     """关闭摄像头"""
     try:
-        if cam_type == "picamera2":
-            cam_obj.stop()
-            cam_obj.close()
-        elif cam_type == "opencv":
-            cam_obj.release()
+        cam_obj.release()
     except Exception as e:
         add_log("WARN", f"关闭摄像头异常: {e}")
 
