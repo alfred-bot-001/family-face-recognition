@@ -221,10 +221,16 @@ class GestureDetector:
                 if angle < 85 and depth > 8000:
                     finger_gaps += 1
 
-        # gap≈手指缝，张手通常 >=3
-        if finger_gaps >= 3:
+        # 结合凸包实心度（solidity）提升稳定性
+        hull_pts = cv2.convexHull(cnt)
+        hull_area = max(1.0, cv2.contourArea(hull_pts))
+        solidity = area / hull_area
+
+        # 张手：手指缝较多 或 实心度偏低
+        if finger_gaps >= 2 or solidity < 0.82:
             gesture = "open_palm"
-        elif finger_gaps <= 1:
+        # 握拳：手指缝少 且 实心度高
+        elif finger_gaps <= 1 and solidity > 0.90:
             gesture = "fist"
         else:
             gesture = "unknown"
@@ -245,7 +251,7 @@ class GestureDetector:
             "hands_count": 1,
             "wave_detected": wave,
             "gesture": gesture,
-            "hand_landmarks": [{"wrist_x": round(cx, 3), "wrist_y": round(cy, 3), "gesture": gesture, "gaps": finger_gaps}],
+            "hand_landmarks": [{"wrist_x": round(cx, 3), "wrist_y": round(cy, 3), "gesture": gesture, "gaps": finger_gaps, "solidity": round(solidity, 3)}],
         }
 
     def detect(self, frame_bgr: np.ndarray) -> dict:
