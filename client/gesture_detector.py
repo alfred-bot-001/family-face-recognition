@@ -87,37 +87,45 @@ class GestureDetector:
 
     def _get_finger_states(self, lms) -> dict:
         """
-        获取五指状态（复用 ugv_rpi calculate_angle 逻辑）
-        返回每根手指的弯曲角度和是否伸直
+        获取五指状态（改进：角度 + 几何双判定，降低误判“握拳”）
         """
         HL = self.mp_hands.HandLandmark
 
-        # 四指弯曲角度（与 ugv_rpi 一致）
+        # 四指角度
         index_angle = calculate_angle(
             lms[HL.INDEX_FINGER_MCP], lms[HL.INDEX_FINGER_PIP],
             lms[HL.INDEX_FINGER_PIP], lms[HL.INDEX_FINGER_TIP])
-
         middle_angle = calculate_angle(
             lms[HL.MIDDLE_FINGER_MCP], lms[HL.MIDDLE_FINGER_PIP],
             lms[HL.MIDDLE_FINGER_PIP], lms[HL.MIDDLE_FINGER_TIP])
-
         ring_angle = calculate_angle(
             lms[HL.RING_FINGER_MCP], lms[HL.RING_FINGER_PIP],
             lms[HL.RING_FINGER_PIP], lms[HL.RING_FINGER_TIP])
-
         pinky_angle = calculate_angle(
             lms[HL.WRIST], lms[HL.PINKY_MCP],
             lms[HL.PINKY_MCP], lms[HL.PINKY_TIP])
 
-        # 拇指（通过 x 轴距离判断）
-        thumb_extended = abs(lms[HL.THUMB_TIP].x - lms[HL.WRIST].x) > 0.06
+        # 几何判定：tip 在 pip 上方（图像坐标 y 越小越高）
+        y_margin = 0.015
+        index_up = lms[HL.INDEX_FINGER_TIP].y < (lms[HL.INDEX_FINGER_PIP].y - y_margin)
+        middle_up = lms[HL.MIDDLE_FINGER_TIP].y < (lms[HL.MIDDLE_FINGER_PIP].y - y_margin)
+        ring_up = lms[HL.RING_FINGER_TIP].y < (lms[HL.RING_FINGER_PIP].y - y_margin)
+        pinky_up = lms[HL.PINKY_TIP].y < (lms[HL.PINKY_PIP].y - y_margin)
+
+        # 拇指：比较 thumb tip 相对 index_mcp 的外展距离
+        thumb_tip = lms[HL.THUMB_TIP]
+        thumb_ip = lms[HL.THUMB_IP]
+        index_mcp = lms[HL.INDEX_FINGER_MCP]
+        thumb_tip_dist = calculate_distance(thumb_tip, index_mcp)
+        thumb_ip_dist = calculate_distance(thumb_ip, index_mcp)
+        thumb_extended = thumb_tip_dist > (thumb_ip_dist * 1.08)
 
         return {
             "thumb": {"extended": thumb_extended},
-            "index": {"angle": index_angle, "extended": index_angle < 20},
-            "middle": {"angle": middle_angle, "extended": middle_angle < 20},
-            "ring": {"angle": ring_angle, "extended": ring_angle < 20},
-            "pinky": {"angle": pinky_angle, "extended": pinky_angle < 40},
+            "index": {"angle": index_angle, "extended": (index_angle < 35) or index_up},
+            "middle": {"angle": middle_angle, "extended": (middle_angle < 35) or middle_up},
+            "ring": {"angle": ring_angle, "extended": (ring_angle < 35) or ring_up},
+            "pinky": {"angle": pinky_angle, "extended": (pinky_angle < 55) or pinky_up},
         }
 
     def _classify_gesture(self, fingers: dict) -> str:
@@ -197,27 +205,34 @@ class GestureDetector:
 
         result["hands_count"] = len(mp_result.multi_hand_landmarks)
 
+        # 多手时取“最有意义”的手势，避免最后一只手覆盖成 fist
+        priority = {"open_palm": 4, "peace": 3, "unknown": 2, "fist": 1, "none": 0}
+        best_gesture = "none"
+
         for hand_lms in mp_result.multi_hand_landmarks:
             lms = hand_lms.landmark
             HL = self.mp_hands.HandLandmark
             wrist = lms[HL.WRIST]
 
-            # 手指状态
             fingers = self._get_finger_states(lms)
             gesture = self._classify_gesture(fingers)
+            ext_cnt = sum(1 for f in fingers.values() if f.get("extended"))
 
             hand_info = {
                 "wrist_x": round(wrist.x, 3),
                 "wrist_y": round(wrist.y, 3),
                 "gesture": gesture,
+                "extended_count": ext_cnt,
             }
             result["hand_landmarks"].append(hand_info)
-            result["gesture"] = gesture  # 最后一只手的手势
 
-            # 张开手掌时跟踪挥手
+            if priority.get(gesture, 0) > priority.get(best_gesture, 0):
+                best_gesture = gesture
+
             if gesture == "open_palm":
                 self.wrist_history.append((time.time(), wrist.x))
                 if self._check_wave():
                     result["wave_detected"] = True
 
+        result["gesture"] = best_gesture
         return result
