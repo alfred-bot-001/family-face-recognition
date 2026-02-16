@@ -30,7 +30,7 @@ FRAME_DURATION_MS = 60
 FRAME_SIZE = SAMPLE_RATE * FRAME_DURATION_MS // 1000  # 960
 AUDIO_PLAY = "plughw:3,0"
 AUDIO_REC = "plughw:2,0"
-WAKE_WORD = "旋风战车"
+WAKE_WORD = "小智"
 VOSK_MODEL = os.path.join(os.path.dirname(__file__), "models", "vosk-model-small-cn-0.22")
 
 # ============================================================
