@@ -99,6 +99,8 @@ class WakeWordListener:
             else:
                 partial = json.loads(self.recognizer.PartialResult())
                 text = partial.get("partial", "")
+                if text and len(text) > 1:
+                    log.info(f"vosk partial: {text}")
                 if WAKE_WORD in text:
                     self._trigger(on_wake, f"partial: {text}")
 
