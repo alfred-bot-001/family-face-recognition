@@ -256,6 +256,9 @@ class XiaozhiClient:
             elif state == "stop":
                 self.is_speaking = False
                 log.info("🔊 服务端说话结束")
+                # 停止录音，让唤醒词监听恢复
+                if self.is_listening:
+                    await self.stop_listening()
         elif t == "stt":
             log.info(f"🎤 识别: {msg.get('text', '')}")
         elif t == "llm":
