@@ -57,19 +57,20 @@ class GestureDetector:
 
     def __init__(self, log_func=None):
         self.log = log_func or print
-        self.available = MP_AVAILABLE
+        self.mode = "opencv"  # opencv | mediapipe
+        self.available = True
 
-        if not MP_AVAILABLE:
-            self.log("WARN", "mediapipe 未安装，手势检测不可用")
-            return
-
-        self.mp_hands = mp.solutions.hands
-        self.hands = self.mp_hands.Hands(
-            static_image_mode=False,
-            max_num_hands=2,
-            min_detection_confidence=0.6,
-            min_tracking_confidence=0.5,
-        )
+        # MediaPipe 作为兜底
+        self.mp_hands = None
+        self.hands = None
+        if MP_AVAILABLE:
+            self.mp_hands = mp.solutions.hands
+            self.hands = self.mp_hands.Hands(
+                static_image_mode=False,
+                max_num_hands=2,
+                min_detection_confidence=0.6,
+                min_tracking_confidence=0.5,
+            )
 
         # 挥手检测参数
         self.wrist_history: deque = deque(maxlen=20)
@@ -79,7 +80,7 @@ class GestureDetector:
         self.history_window = 1.5         # 时间窗口（秒）
         self.min_move = 0.03              # 最小移动
 
-        self.log("INFO", "手势检测已初始化 (MediaPipe Hands)")
+        self.log("INFO", "手势检测已初始化 (OpenCV + MediaPipe兜底)")
 
     def _finger_extended(self, lms, tip_id: int, pip_id: int) -> bool:
         """手指是否伸直"""
@@ -174,6 +175,79 @@ class GestureDetector:
             return True
         return False
 
+    def _detect_opencv(self, frame_bgr: np.ndarray) -> dict:
+        """OpenCV 轮廓 + 凹陷点手势检测（主算法）"""
+        h, w = frame_bgr.shape[:2]
+        area_min = max(1200, int(h * w * 0.01))
+
+        blur = cv2.GaussianBlur(frame_bgr, (7, 7), 0)
+        ycrcb = cv2.cvtColor(blur, cv2.COLOR_BGR2YCrCb)
+        # 常见肤色阈值（YCrCb）
+        lower = np.array([0, 133, 77], dtype=np.uint8)
+        upper = np.array([255, 173, 127], dtype=np.uint8)
+        mask = cv2.inRange(ycrcb, lower, upper)
+
+        kernel = np.ones((5, 5), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return {"hands_count": 0, "wave_detected": False, "gesture": "none", "hand_landmarks": []}
+
+        cnt = max(contours, key=cv2.contourArea)
+        area = cv2.contourArea(cnt)
+        if area < area_min:
+            return {"hands_count": 0, "wave_detected": False, "gesture": "none", "hand_landmarks": []}
+
+        hull = cv2.convexHull(cnt, returnPoints=False)
+        if hull is None or len(hull) < 4:
+            return {"hands_count": 1, "wave_detected": False, "gesture": "unknown", "hand_landmarks": []}
+
+        defects = cv2.convexityDefects(cnt, hull)
+        finger_gaps = 0
+        if defects is not None:
+            for i in range(defects.shape[0]):
+                s, e, f, depth = defects[i, 0]
+                start = cnt[s][0]
+                end = cnt[e][0]
+                far = cnt[f][0]
+                a = np.linalg.norm(start - end)
+                b = np.linalg.norm(start - far)
+                c = np.linalg.norm(end - far)
+                if b * c == 0:
+                    continue
+                angle = math.degrees(math.acos(max(-1, min(1, (b*b + c*c - a*a) / (2*b*c)))))
+                if angle < 85 and depth > 8000:
+                    finger_gaps += 1
+
+        # gap≈手指缝，张手通常 >=3
+        if finger_gaps >= 3:
+            gesture = "open_palm"
+        elif finger_gaps <= 1:
+            gesture = "fist"
+        else:
+            gesture = "unknown"
+
+        M = cv2.moments(cnt)
+        cx, cy = 0.5, 0.5
+        if M["m00"] != 0:
+            cx = (M["m10"] / M["m00"]) / w
+            cy = (M["m01"] / M["m00"]) / h
+
+        if gesture == "open_palm":
+            self.wrist_history.append((time.time(), cx))
+            wave = self._check_wave()
+        else:
+            wave = False
+
+        return {
+            "hands_count": 1,
+            "wave_detected": wave,
+            "gesture": gesture,
+            "hand_landmarks": [{"wrist_x": round(cx, 3), "wrist_y": round(cy, 3), "gesture": gesture, "gaps": finger_gaps}],
+        }
+
     def detect(self, frame_bgr: np.ndarray) -> dict:
         """
         检测手势
@@ -186,26 +260,28 @@ class GestureDetector:
                 "hand_landmarks": list,   # 简要信息
             }
         """
+        # 1) 主算法：OpenCV
+        cv_result = self._detect_opencv(frame_bgr)
+        if cv_result["gesture"] != "none":
+            return cv_result
+
+        # 2) 兜底：MediaPipe
         result = {
             "hands_count": 0,
             "wave_detected": False,
             "gesture": "none",
             "hand_landmarks": [],
         }
-
-        if not self.available:
+        if not self.hands:
             return result
 
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         mp_result = self.hands.process(frame_rgb)
-
         if not mp_result.multi_hand_landmarks:
             self.wrist_history.clear()
             return result
 
         result["hands_count"] = len(mp_result.multi_hand_landmarks)
-
-        # 多手时取“最有意义”的手势，避免最后一只手覆盖成 fist
         priority = {"open_palm": 4, "peace": 3, "unknown": 2, "fist": 1, "none": 0}
         best_gesture = "none"
 
@@ -213,22 +289,18 @@ class GestureDetector:
             lms = hand_lms.landmark
             HL = self.mp_hands.HandLandmark
             wrist = lms[HL.WRIST]
-
             fingers = self._get_finger_states(lms)
             gesture = self._classify_gesture(fingers)
             ext_cnt = sum(1 for f in fingers.values() if f.get("extended"))
-
-            hand_info = {
+            result["hand_landmarks"].append({
                 "wrist_x": round(wrist.x, 3),
                 "wrist_y": round(wrist.y, 3),
                 "gesture": gesture,
                 "extended_count": ext_cnt,
-            }
-            result["hand_landmarks"].append(hand_info)
+            })
 
             if priority.get(gesture, 0) > priority.get(best_gesture, 0):
                 best_gesture = gesture
-
             if gesture == "open_palm":
                 self.wrist_history.append((time.time(), wrist.x))
                 if self._check_wave():
