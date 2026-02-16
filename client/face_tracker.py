@@ -27,7 +27,16 @@ DEFAULT_BAUD = 115200
 # 跟踪优先级（越靠前越优先）
 PRIORITY_NAMES = ["max", "son", "wife"]
 
-# 舵机参数
+# 语音问候配置（人出现后冷却时间内不重复问候）
+GREET_COOLDOWN = 300  # 秒（5分钟）
+GREET_MESSAGES = {
+    "son":  "你好，小虎！",
+    "max":  "老大好！",
+    "wife": "嫂子好！",
+}
+GREET_DEFAULT = "你好！"  # 未知已知人脸的默认问候
+
+# 舵机参数（与 ugv_rpi/cv_ctrl.py 机械限位一致）
 PAN_MIN, PAN_MAX = -180, 180      # 水平范围
 TILT_MIN, TILT_MAX = -30, 90      # 垂直范围
 TRACK_ITERATE = 0.045             # 跟踪步进系数
@@ -35,6 +44,68 @@ TRACK_SPD_RATE = 60               # 速度系数
 TRACK_ACC_RATE = 0.4              # 加速度系数
 AIMED_ERROR = 8                   # 瞄准误差阈值（像素）
 CMD_GIMBAL = 133                  # 舵机控制指令码
+
+# ============================================================
+#  语音问候
+# ============================================================
+
+class VoiceGreeter:
+    """检测到家人时语音问候（冷却时间内不重复）"""
+
+    def __init__(self, cooldown: float = GREET_COOLDOWN):
+        self.cooldown = cooldown
+        self.last_greet_time: dict[str, float] = {}  # name -> 上次问候时间
+        self.tts_lock = threading.Lock()
+        self.engine = None
+        self._init_tts()
+
+    def _init_tts(self):
+        """初始化 pyttsx3 TTS 引擎（与 ugv_rpi/audio_ctrl.py 一致）"""
+        try:
+            import pyttsx3
+            self.engine = pyttsx3.init()
+            self.engine.setProperty("rate", 180)  # 语速
+            print("[语音] TTS 引擎已初始化")
+        except Exception as e:
+            self.engine = None
+            print(f"[语音] TTS 初始化失败: {e}")
+
+    def should_greet(self, name: str) -> bool:
+        """判断是否需要问候（冷却时间外）"""
+        if name == "unknown":
+            return False
+        last = self.last_greet_time.get(name, 0)
+        return time.time() - last > self.cooldown
+
+    def greet(self, name: str):
+        """异步播放问候语音"""
+        if not self.engine:
+            return
+        if not self.should_greet(name):
+            return
+
+        self.last_greet_time[name] = time.time()
+        msg = GREET_MESSAGES.get(name, GREET_DEFAULT)
+        add_log("INFO", f"🔊 语音问候: {name} → {msg}")
+
+        threading.Thread(target=self._speak, args=(msg,), daemon=True).start()
+
+    def _speak(self, text: str):
+        """TTS 播放（线程安全）"""
+        with self.tts_lock:
+            try:
+                self.engine.say(text)
+                self.engine.runAndWait()
+            except Exception as e:
+                add_log("ERROR", f"语音播放失败: {e}")
+
+    def check_faces(self, faces: list[dict]):
+        """检查所有识别到的人脸，触发问候"""
+        for face in faces:
+            name = face.get("name", "unknown")
+            if name != "unknown":
+                self.greet(name)
+
 
 # ============================================================
 #  舵机控制器
@@ -327,8 +398,9 @@ def make_placeholder_frame(width: int, height: int, text: str = "摄像头未连
 
 
 def camera_tracking_loop(api_url: str, camera_id: int, width: int, height: int,
-                         fps_limit: int, gimbal: GimbalController):
-    """主循环：摄像头 → API → 跟踪 → 舵机"""
+                         fps_limit: int, gimbal: GimbalController,
+                         greeter: VoiceGreeter):
+    """主循环：摄像头 → API → 跟踪 → 舵机 → 语音"""
     global latest_frame, latest_results, tracker_status, is_running
 
     tracker = FaceTracker(api_url, gimbal, width, height)
@@ -403,6 +475,9 @@ def camera_tracking_loop(api_url: str, camera_id: int, width: int, height: int,
                 # 更新跟踪
                 tracker.update(faces)
 
+                # 语音问候
+                greeter.check_faces(faces)
+
                 with lock:
                     latest_results = faces
                     latest_frame = draw_tracking_results(frame, faces, tracker.tracking_name)
@@ -416,6 +491,8 @@ def camera_tracking_loop(api_url: str, camera_id: int, width: int, height: int,
                         "frame_count": frame_count,
                         "api_ok": api_ok_count,
                         "api_err": api_err_count,
+                        "greet_history": {k: time.strftime("%H:%M:%S", time.localtime(v))
+                                          for k, v in greeter.last_greet_time.items()},
                     }
             else:
                 api_err_count += 1
@@ -531,10 +608,14 @@ def main():
         gimbal_instance.center()
         time.sleep(0.5)
 
+    # 初始化语音问候
+    greeter_instance = VoiceGreeter(cooldown=GREET_COOLDOWN)
+
     # 启动摄像头+跟踪线程
     cam_thread = threading.Thread(
         target=camera_tracking_loop,
-        args=(args.api, args.camera, args.width, args.height, args.fps, gimbal_instance),
+        args=(args.api, args.camera, args.width, args.height, args.fps,
+              gimbal_instance, greeter_instance),
         daemon=True,
     )
     cam_thread.start()
