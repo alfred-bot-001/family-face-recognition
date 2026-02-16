@@ -729,6 +729,38 @@ def gimbal_center():
     return jsonify({"ok": True})
 
 
+@flask_app.route("/api/volume", methods=["GET"])
+def get_volume():
+    """获取当前音量"""
+    import subprocess
+    try:
+        out = subprocess.check_output(["amixer", "-c", "3", "get", "Speaker"],
+                                      stderr=subprocess.DEVNULL).decode()
+        for line in out.split("\n"):
+            if "%" in line:
+                pct = int(line.split("[")[1].split("%")[0])
+                return jsonify({"volume": pct})
+    except Exception:
+        pass
+    return jsonify({"volume": -1})
+
+
+@flask_app.route("/api/volume", methods=["POST"])
+def set_volume():
+    """设置音量 (0-100)"""
+    import subprocess
+    data = request.get_json() or {}
+    vol = int(data.get("volume", 50))
+    vol = max(0, min(100, vol))
+    try:
+        subprocess.run(["amixer", "-c", "3", "set", "Speaker", f"{vol}%"],
+                       capture_output=True, timeout=5)
+        add_log("INFO", f"🔊 音量设置: {vol}%")
+        return jsonify({"ok": True, "volume": vol})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
 # ============================================================
 #  入口
 # ============================================================

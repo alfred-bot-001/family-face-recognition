@@ -73,6 +73,11 @@
         .log-entry .log-level-INFO { color: #4caf50; }
         .log-entry .log-level-WARN { color: #ff9800; }
         .log-entry .log-msg { color: #ccc; }
+        .vol-btn {
+            width: 36px; height: 36px; border-radius: 50%; border: none;
+            background: #333; color: #e0e0e0; font-size: 1.2rem; cursor: pointer;
+        }
+        .vol-btn:hover { background: #444; }
         @media (max-width: 768px) { .main-content { grid-template-columns: 1fr; } }
     </style>
 </head>
@@ -106,6 +111,17 @@
                         </div>
                     </div>
                     <button class="btn" onclick="gimbalCenter()">🏠 回中</button>
+                </div>
+                <div class="card">
+                    <h2>🔊 音量</h2>
+                    <div style="display:flex;align-items:center;gap:8px">
+                        <button class="vol-btn" onclick="setVol(-10)">−</button>
+                        <div style="flex:1;background:#252525;border-radius:8px;height:24px;overflow:hidden">
+                            <div id="volBar" style="height:100%;background:#4caf50;border-radius:8px;transition:width .2s;width:50%"></div>
+                        </div>
+                        <span id="volText" style="min-width:36px;text-align:center;font-family:monospace">50%</span>
+                        <button class="vol-btn" onclick="setVol(10)">+</button>
+                    </div>
                 </div>
                 <div class="card">
                     <h2>🧑 检测到的人脸</h2>
@@ -186,6 +202,24 @@
                 ).join('');
             } catch(e) {}
         }
+        let currentVol = 50;
+        async function fetchVol() {
+            try {
+                const r = await fetch('/api/volume');
+                const d = await r.json();
+                if (d.volume >= 0) { currentVol = d.volume; updateVolUI(); }
+            } catch(e) {}
+        }
+        function updateVolUI() {
+            document.getElementById('volBar').style.width = currentVol + '%';
+            document.getElementById('volText').textContent = currentVol + '%';
+        }
+        async function setVol(delta) {
+            currentVol = Math.max(0, Math.min(100, currentVol + delta));
+            updateVolUI();
+            await fetch('/api/volume', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({volume:currentVol})});
+        }
+        fetchVol();
         setInterval(pollStatus, 800);
         setInterval(pollLogs, 2000);
         pollStatus();
