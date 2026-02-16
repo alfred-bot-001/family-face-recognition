@@ -30,7 +30,7 @@ FRAME_DURATION_MS = 60
 FRAME_SIZE = SAMPLE_RATE * FRAME_DURATION_MS // 1000  # 960
 AUDIO_PLAY = "plughw:3,0"
 AUDIO_REC = "plughw:5,0"
-WAKE_WORD = "小智"
+WAKE_WORD = "乐迪"
 # sherpa-onnx 常见误识别变体
 # (唤醒词检测已改用 KWS，无需模糊匹配)
 SHERPA_KWS_DIR = os.path.join(os.path.dirname(__file__), "models", "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20")
