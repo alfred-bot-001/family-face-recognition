@@ -216,6 +216,17 @@ tracker_status: dict = {}
 is_running = True
 lock = threading.Lock()
 
+# 日志缓冲
+from collections import deque
+log_buffer = deque(maxlen=100)
+
+def add_log(level: str, msg: str):
+    """添加系统日志"""
+    ts = time.strftime("%H:%M:%S")
+    entry = {"time": ts, "level": level, "msg": msg}
+    log_buffer.appendleft(entry)
+    print(f"[{level}] {ts} {msg}")
+
 flask_app = Flask(__name__, static_folder="static")
 
 
@@ -259,6 +270,63 @@ def draw_tracking_results(frame: np.ndarray, faces: list[dict],
     return annotated
 
 
+def open_camera(camera_id: int, width: int, height: int):
+    """尝试打开摄像头：优先 picamera2 (CSI)，其次 OpenCV (USB)"""
+    # 尝试 picamera2
+    try:
+        from picamera2 import Picamera2
+        cam = Picamera2()
+        config = cam.create_video_configuration(
+            main={"format": "XRGB8888", "size": (width, height)}
+        )
+        cam.configure(config)
+        cam.start()
+        time.sleep(0.5)
+        print(f"[摄像头] picamera2 CSI 已打开 ({width}x{height})")
+        return ("picamera2", cam)
+    except Exception as e:
+        print(f"[摄像头] picamera2 失败: {e}")
+
+    # 尝试 OpenCV USB
+    cap = cv2.VideoCapture(camera_id)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    if cap.isOpened():
+        print(f"[摄像头] OpenCV USB 已打开 ({width}x{height})")
+        return ("opencv", cap)
+
+    print(f"[错误] 无法打开任何摄像头")
+    return (None, None)
+
+
+def read_frame(cam_type, cam_obj):
+    """从摄像头读取一帧，返回 BGR numpy 数组"""
+    if cam_type == "picamera2":
+        arr = cam_obj.capture_array()
+        # XRGB8888 → BGR
+        if arr.ndim == 3 and arr.shape[2] == 4:
+            return cv2.cvtColor(arr, cv2.COLOR_RGBA2BGR)
+        elif arr.ndim == 3 and arr.shape[2] == 3:
+            return cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+        return arr
+    elif cam_type == "opencv":
+        ret, frame = cam_obj.read()
+        return frame if ret else None
+    return None
+
+
+def close_camera(cam_type, cam_obj):
+    """关闭摄像头"""
+    try:
+        if cam_type == "picamera2":
+            cam_obj.stop()
+            cam_obj.close()
+        elif cam_type == "opencv":
+            cam_obj.release()
+    except Exception as e:
+        print(f"[摄像头] 关闭异常: {e}")
+
+
 def camera_tracking_loop(api_url: str, camera_id: int, width: int, height: int,
                          fps_limit: int, gimbal: GimbalController):
     """主循环：摄像头 → API → 跟踪 → 舵机"""
@@ -266,24 +334,30 @@ def camera_tracking_loop(api_url: str, camera_id: int, width: int, height: int,
 
     tracker = FaceTracker(api_url, gimbal, width, height)
 
-    cap = cv2.VideoCapture(camera_id)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-
-    if not cap.isOpened():
-        print(f"[错误] 无法打开摄像头 {camera_id}")
+    cam_type, cam_obj = open_camera(camera_id, width, height)
+    if cam_type is None:
+        add_log("ERROR", "无法打开任何摄像头，退出")
         is_running = False
         return
 
-    print(f"[摄像头] 已打开 ({width}x{height})")
+    add_log("INFO", f"摄像头已打开: {cam_type} ({width}x{height})")
     frame_interval = 1.0 / fps_limit
     last_send = 0
+    frame_count = 0
+    api_ok_count = 0
+    api_err_count = 0
 
     while is_running:
-        ret, frame = cap.read()
-        if not ret:
+        frame = read_frame(cam_type, cam_obj)
+        if frame is None:
+            if frame_count == 0:
+                add_log("ERROR", "读取第一帧失败")
             time.sleep(0.1)
             continue
+
+        frame_count += 1
+        if frame_count == 1:
+            add_log("INFO", f"首帧获取成功: {frame.shape}")
 
         now = time.time()
 
@@ -306,6 +380,10 @@ def camera_tracking_loop(api_url: str, camera_id: int, width: int, height: int,
             if resp.status_code == 200:
                 data = resp.json()
                 faces = data.get("faces", [])
+                api_ok_count += 1
+
+                if api_ok_count == 1:
+                    add_log("INFO", f"API 首次响应成功，检测到 {len(faces)} 张脸")
 
                 # 更新跟踪
                 tracker.update(faces)
@@ -320,14 +398,22 @@ def camera_tracking_loop(api_url: str, camera_id: int, width: int, height: int,
                         "tilt": round(gimbal.tilt_angle, 1),
                         "faces_count": len(faces),
                         "known_count": len([f for f in faces if f.get("name") != "unknown"]),
+                        "frame_count": frame_count,
+                        "api_ok": api_ok_count,
+                        "api_err": api_err_count,
                     }
+            else:
+                api_err_count += 1
+                add_log("ERROR", f"API HTTP {resp.status_code}")
         except requests.exceptions.RequestException as e:
-            print(f"[API] 连接失败: {e}")
+            api_err_count += 1
+            if api_err_count <= 3 or api_err_count % 10 == 0:
+                add_log("ERROR", f"API 连接失败: {e}")
             with lock:
                 latest_results = []
                 latest_frame = draw_tracking_results(frame, [], None)
 
-    cap.release()
+    close_camera(cam_type, cam_obj)
     gimbal.center()
     gimbal.close()
 
@@ -372,6 +458,11 @@ def api_status():
             "faces": latest_results.copy(),
             "running": is_running,
         })
+
+
+@flask_app.route("/api/logs")
+def api_logs():
+    return jsonify(list(log_buffer))
 
 
 @flask_app.route("/api/gimbal/center", methods=["POST"])

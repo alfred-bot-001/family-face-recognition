@@ -63,6 +63,16 @@
         .face-item.unknown { border-left-color: #f44336; }
         .priority-list { font-size: 0.85rem; color: #888; }
         .priority-list span { color: #ffeb3b; font-weight: 600; }
+        .log-panel {
+            max-height: 200px; overflow-y: auto;
+            font-size: 0.75rem; font-family: monospace;
+        }
+        .log-entry { padding: 3px 0; border-bottom: 1px solid #222; }
+        .log-entry .log-time { color: #555; }
+        .log-entry .log-level-ERROR { color: #f44336; font-weight: 700; }
+        .log-entry .log-level-INFO { color: #4caf50; }
+        .log-entry .log-level-WARN { color: #ff9800; }
+        .log-entry .log-msg { color: #ccc; }
         @media (max-width: 768px) { .main-content { grid-template-columns: 1fr; } }
     </style>
 </head>
@@ -100,6 +110,10 @@
                 <div class="card">
                     <h2>🧑 检测到的人脸</h2>
                     <div id="faceList"></div>
+                </div>
+                <div class="card">
+                    <h2>📋 系统日志</h2>
+                    <div class="log-panel" id="logPanel"></div>
                 </div>
             </div>
         </div>
@@ -144,8 +158,20 @@
         async function gimbalCenter() {
             await fetch('/api/gimbal/center', {method:'POST'});
         }
+        const logPanel = document.getElementById('logPanel');
+        async function pollLogs() {
+            try {
+                const r = await fetch('/api/logs');
+                const logs = await r.json();
+                logPanel.innerHTML = logs.map(l =>
+                    `<div class="log-entry"><span class="log-time">${l.time}</span> <span class="log-level-${l.level}">[${l.level}]</span> <span class="log-msg">${l.msg}</span></div>`
+                ).join('');
+            } catch(e) {}
+        }
         setInterval(pollStatus, 800);
+        setInterval(pollLogs, 2000);
         pollStatus();
+        pollLogs();
         document.getElementById('videoStream').onerror = function() {
             setTimeout(() => { this.src = '/video_feed?' + Date.now(); }, 2000);
         };
