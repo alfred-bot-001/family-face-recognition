@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>家庭人脸识别 - 实时监控</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #0f0f0f;
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 16px;
+        }
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid #333;
+            margin-bottom: 16px;
+        }
+        header h1 {
+            font-size: 1.4rem;
+            font-weight: 600;
+        }
+        .status-bar {
+            display: flex;
+            gap: 16px;
+            font-size: 0.85rem;
+        }
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: #666;
+        }
+        .dot.online { background: #4caf50; }
+        .dot.offline { background: #f44336; }
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 320px;
+            gap: 16px;
+        }
+        .video-panel {
+            background: #1a1a1a;
+            border-radius: 12px;
+            overflow: hidden;
+            position: relative;
+        }
+        .video-panel img {
+            width: 100%;
+            display: block;
+            aspect-ratio: 4/3;
+            object-fit: contain;
+            background: #000;
+        }
+        .fps-overlay {
+            position: absolute;
+            top: 8px; left: 8px;
+            background: rgba(0,0,0,0.7);
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-family: monospace;
+        }
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .card {
+            background: #1a1a1a;
+            border-radius: 12px;
+            padding: 16px;
+        }
+        .card h2 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: #aaa;
+        }
+        .face-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .face-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 12px;
+            background: #252525;
+            border-radius: 8px;
+            border-left: 3px solid #4caf50;
+        }
+        .face-item.unknown {
+            border-left-color: #f44336;
+        }
+        .face-name {
+            font-weight: 600;
+            font-size: 1rem;
+        }
+        .face-conf {
+            font-size: 0.85rem;
+            color: #888;
+        }
+        .face-meta {
+            font-size: 0.75rem;
+            color: #666;
+            margin-top: 2px;
+        }
+        .no-faces {
+            color: #555;
+            text-align: center;
+            padding: 20px;
+            font-size: 0.9rem;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+        .stat {
+            text-align: center;
+            padding: 8px;
+            background: #252525;
+            border-radius: 8px;
+        }
+        .stat-value {
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: #4caf50;
+        }
+        .stat-label {
+            font-size: 0.7rem;
+            color: #666;
+            margin-top: 2px;
+        }
+        .log {
+            max-height: 200px;
+            overflow-y: auto;
+            font-size: 0.75rem;
+            font-family: monospace;
+            color: #666;
+        }
+        .log-entry {
+            padding: 2px 0;
+            border-bottom: 1px solid #222;
+        }
+        .log-entry .time { color: #555; }
+        .log-entry .name { color: #4caf50; font-weight: 600; }
+
+        @media (max-width: 768px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>👨‍👩‍👦 家庭人脸识别</h1>
+            <div class="status-bar">
+                <div class="status-item">
+                    <div class="dot" id="statusDot"></div>
+                    <span id="statusText">连接中...</span>
+                </div>
+            </div>
+        </header>
+
+        <div class="main-content">
+            <div class="video-panel">
+                <img id="videoStream" src="/video_feed" alt="视频流">
+                <div class="fps-overlay">
+                    <span id="fpsText">-- FPS</span>
+                </div>
+            </div>
+
+            <div class="sidebar">
+                <div class="card">
+                    <h2>📊 状态</h2>
+                    <div class="stats-grid">
+                        <div class="stat">
+                            <div class="stat-value" id="recFps">--</div>
+                            <div class="stat-label">识别 FPS</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-value" id="camFps">--</div>
+                            <div class="stat-label">摄像头 FPS</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-value" id="faceCount">0</div>
+                            <div class="stat-label">检测人脸</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-value" id="knownCount">0</div>
+                            <div class="stat-label">已识别</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>🧑 识别结果</h2>
+                    <div class="face-list" id="faceList">
+                        <div class="no-faces">等待识别...</div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>📝 识别日志</h2>
+                    <div class="log" id="logPanel"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        const fpsText = document.getElementById('fpsText');
+        const recFps = document.getElementById('recFps');
+        const camFps = document.getElementById('camFps');
+        const faceCount = document.getElementById('faceCount');
+        const knownCount = document.getElementById('knownCount');
+        const faceList = document.getElementById('faceList');
+        const logPanel = document.getElementById('logPanel');
+
+        let lastSeenNames = new Set();
+        const MAX_LOG = 50;
+
+        function addLog(name, confidence) {
+            const now = new Date().toLocaleTimeString('zh-CN');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `<span class="time">${now}</span> <span class="name">${name}</span> (${(confidence * 100).toFixed(0)}%)`;
+            logPanel.prepend(entry);
+            while (logPanel.children.length > MAX_LOG) {
+                logPanel.removeChild(logPanel.lastChild);
+            }
+        }
+
+        async function pollStatus() {
+            try {
+                const resp = await fetch('/api/status');
+                const data = await resp.json();
+
+                statusDot.className = 'dot online';
+                statusText.textContent = '在线';
+
+                recFps.textContent = data.recognition_fps || '--';
+                camFps.textContent = data.camera_fps || '--';
+                fpsText.textContent = `识别 ${data.recognition_fps || 0} FPS | 摄像头 ${data.camera_fps || 0} FPS`;
+
+                const faces = data.faces || [];
+                faceCount.textContent = faces.length;
+                const known = faces.filter(f => f.name !== 'unknown');
+                knownCount.textContent = known.length;
+
+                if (faces.length === 0) {
+                    faceList.innerHTML = '<div class="no-faces">未检测到人脸</div>';
+                } else {
+                    faceList.innerHTML = faces.map(f => {
+                        const isUnknown = f.name === 'unknown';
+                        const cls = isUnknown ? 'face-item unknown' : 'face-item';
+                        const age = f.age ? `${f.age}岁` : '';
+                        const gender = f.gender === 'M' ? '男' : f.gender === 'F' ? '女' : '';
+                        const meta = [age, gender].filter(Boolean).join(' · ');
+                        return `
+                            <div class="${cls}">
+                                <div>
+                                    <div class="face-name">${f.name}</div>
+                                    ${meta ? `<div class="face-meta">${meta}</div>` : ''}
+                                </div>
+                                <div class="face-conf">${(f.confidence * 100).toFixed(1)}%</div>
+                            </div>
+                        `;
+                    }).join('');
+                }
+
+                // 新出现的人记录日志
+                const currentNames = new Set(known.map(f => f.name));
+                for (const f of known) {
+                    if (!lastSeenNames.has(f.name)) {
+                        addLog(f.name, f.confidence);
+                    }
+                }
+                lastSeenNames = currentNames;
+
+            } catch (e) {
+                statusDot.className = 'dot offline';
+                statusText.textContent = '离线';
+            }
+        }
+
+        // 每秒刷新状态
+        setInterval(pollStatus, 1000);
+        pollStatus();
+
+        // 视频流断线重连
+        const videoStream = document.getElementById('videoStream');
+        videoStream.onerror = () => {
+            setTimeout(() => {
+                videoStream.src = '/video_feed?' + Date.now();
+            }, 2000);
+        };
+    </script>
+</body>
+</html>

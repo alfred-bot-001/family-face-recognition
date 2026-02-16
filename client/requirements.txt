@@ -1,0 +1,4 @@
+# 树莓派客户端依赖 - 轻量级，不需要 GPU
+opencv-python-headless>=4.8
+requests>=2.31
+flask>=3.0

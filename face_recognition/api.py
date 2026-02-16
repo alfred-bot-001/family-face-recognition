@@ -10,6 +10,7 @@ import numpy as np
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 
 from .detector import FaceDetector
 from .recognizer import FaceRecognizer
@@ -41,6 +42,14 @@ app = FastAPI(
     description="本地部署的人脸识别服务，支持照片和视频",
     version="1.0.0",
     lifespan=lifespan,
+)
+
+# CORS - 允许客户端跨域调用
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
