@@ -131,7 +131,10 @@ class WakeWordListener:
                 if self.paused:
                     time.sleep(0.1)
                 continue
-            samples = self.np.frombuffer(data, dtype=self.np.int16).astype(self.np.float32) / 32768.0
+            raw = self.np.frombuffer(data, dtype=self.np.int16).astype(self.np.float32)
+            raw *= 4.0  # 软件增益补偿 XFM 麦克风
+            self.np.clip(raw, -32768, 32767, out=raw)
+            samples = raw / 32768.0
             stream.accept_waveform(SAMPLE_RATE, samples)
             while self.recognizer.is_ready(stream):
                 self.recognizer.decode_stream(stream)
