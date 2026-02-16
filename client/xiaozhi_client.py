@@ -75,9 +75,9 @@ class WakeWordListener:
         self._cooldown = 1.5
         self._last_detect = 0
 
-        encoder = os.path.join(SHERPA_KWS_DIR, "encoder.onnx")
-        decoder = os.path.join(SHERPA_KWS_DIR, "decoder.onnx")
-        joiner = os.path.join(SHERPA_KWS_DIR, "joiner.onnx")
+        encoder = os.path.join(SHERPA_KWS_DIR, "encoder-epoch-13-avg-2-chunk-16-left-64.int8.onnx")
+        decoder = os.path.join(SHERPA_KWS_DIR, "decoder-epoch-13-avg-2-chunk-16-left-64.onnx")
+        joiner = os.path.join(SHERPA_KWS_DIR, "joiner-epoch-13-avg-2-chunk-16-left-64.int8.onnx")
         tokens = os.path.join(SHERPA_KWS_DIR, "tokens.txt")
         keywords = os.path.join(SHERPA_KWS_DIR, "keywords.txt")
 
