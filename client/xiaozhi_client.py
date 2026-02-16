@@ -29,7 +29,7 @@ CHANNELS = 1
 FRAME_DURATION_MS = 60
 FRAME_SIZE = SAMPLE_RATE * FRAME_DURATION_MS // 1000  # 960
 AUDIO_PLAY = "plughw:3,0"
-AUDIO_REC = "plughw:5,0"
+AUDIO_REC = "plughw:2,0"
 WAKE_WORD = "乐迪"
 # sherpa-onnx 常见误识别变体
 # (唤醒词检测已改用 KWS，无需模糊匹配)
@@ -122,10 +122,7 @@ class WakeWordListener:
                 if self.paused:
                     time.sleep(0.1)
                 continue
-            raw = self.np.frombuffer(data, dtype=self.np.int16).astype(self.np.float32)
-            raw *= 4.0  # 软件增益补偿 XFM 麦克风
-            self.np.clip(raw, -32768, 32767, out=raw)
-            samples = raw / 32768.0
+            samples = self.np.frombuffer(data, dtype=self.np.int16).astype(self.np.float32) / 32768.0
             stream.accept_waveform(SAMPLE_RATE, samples)
             while self.kws.is_ready(stream):
                 self.kws.decode_stream(stream)
