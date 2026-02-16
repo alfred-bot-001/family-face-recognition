@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 小智语音对话客户端 — 运行在老三(树莓派)上
-唤醒词: "悟空" (vosk 离线识别)
+唤醒词: "悟空悟空" (sherpa-onnx KeywordSpotter)
 保持 WebSocket 长连接，检测唤醒词后开始录音对话
 
 参考: py-xiaozhi 项目协议实现
@@ -30,8 +30,8 @@ FRAME_DURATION_MS = 60
 FRAME_SIZE = SAMPLE_RATE * FRAME_DURATION_MS // 1000  # 960
 AUDIO_PLAY = "plughw:3,0"
 AUDIO_REC = "plughw:2,0"
-WAKE_WORD = "悟空"
-VOSK_MODEL = os.path.join(os.path.dirname(__file__), "models", "vosk-model-small-cn-0.22")
+WAKE_WORD = "悟空悟空"
+SHERPA_MODEL_DIR = os.path.join(os.path.dirname(__file__), "models", "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20")
 
 # ============================================================
 #  Opus
@@ -59,18 +59,45 @@ def speak_async(text: str):
     threading.Thread(target=speak, args=(text,), daemon=True).start()
 
 # ============================================================
-#  唤醒词检测 (vosk)
+#  唤醒词检测 (sherpa-onnx KeywordSpotter)
 # ============================================================
 class WakeWordListener:
     def __init__(self, device=AUDIO_REC):
-        from vosk import Model, KaldiRecognizer
-        log.info(f"加载 vosk 模型: {VOSK_MODEL}")
-        self.model = Model(VOSK_MODEL)
-        self.recognizer = KaldiRecognizer(self.model, SAMPLE_RATE)
+        import sherpa_onnx
+        import numpy as np
+        self.np = np
         self.device = device
         self.paused = False
         self.active = True
         self._proc = None
+        self._cooldown = 1.5  # 防重复触发冷却(秒)
+        self._last_detect = 0
+
+        # 模型路径 (使用 int8 encoder + fp32 decoder 省内存)
+        encoder = os.path.join(SHERPA_MODEL_DIR, "encoder-epoch-13-avg-2-chunk-16-left-64.int8.onnx")
+        decoder = os.path.join(SHERPA_MODEL_DIR, "decoder-epoch-13-avg-2-chunk-16-left-64.onnx")
+        joiner = os.path.join(SHERPA_MODEL_DIR, "joiner-epoch-13-avg-2-chunk-16-left-64.int8.onnx")
+        tokens = os.path.join(SHERPA_MODEL_DIR, "tokens.txt")
+        keywords = os.path.join(SHERPA_MODEL_DIR, "keywords.txt")
+
+        log.info(f"加载 sherpa-onnx KWS 模型: {SHERPA_MODEL_DIR}")
+        self.kws = sherpa_onnx.KeywordSpotter(
+            tokens=tokens,
+            encoder=encoder,
+            decoder=decoder,
+            joiner=joiner,
+            keywords_file=keywords,
+            num_threads=4,
+            sample_rate=SAMPLE_RATE,
+            feature_dim=80,
+            max_active_paths=4,
+            keywords_score=1.0,
+            keywords_threshold=0.25,
+            num_trailing_blanks=1,
+            provider="cpu",
+        )
+        self.stream = self.kws.create_stream()
+        log.info("sherpa-onnx KWS 模型加载完成")
 
     def start(self, on_wake):
         """后台线程监听唤醒词"""
@@ -83,33 +110,36 @@ class WakeWordListener:
              "-r", str(SAMPLE_RATE), "-c", "1", "-t", "raw", "-q"],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
         )
-        chunk = 4000
+        # 每次读 160ms 的音频 (16000 * 0.16 * 2 = 5120 bytes)
+        chunk_samples = int(SAMPLE_RATE * 0.16)
+        chunk_bytes = chunk_samples * 2
         while self.active and self._proc.poll() is None:
-            data = self._proc.stdout.read(chunk)
+            data = self._proc.stdout.read(chunk_bytes)
             if not data or self.paused:
                 continue
-            if self.recognizer.AcceptWaveform(data):
-                result = json.loads(self.recognizer.Result())
-                text = result.get("text", "")
-                if text:
-                    log.info(f"vosk: {text}")
-                    if WAKE_WORD in text:
-                        log.info(f"🎯 唤醒词! ({text})")
-                        on_wake()
-            else:
-                partial = json.loads(self.recognizer.PartialResult())
-                text = partial.get("partial", "")
-                if WAKE_WORD in text:
-                    log.info(f"🎯 唤醒词! (partial: {text})")
-                    self.recognizer.Reset()
+            # 转成 float32 给 sherpa
+            samples = self.np.frombuffer(data, dtype=self.np.int16).astype(self.np.float32) / 32768.0
+            self.stream.accept_waveform(SAMPLE_RATE, samples)
+            while self.kws.is_ready(self.stream):
+                self.kws.decode_stream(self.stream)
+            result = self.kws.get_result(self.stream)
+            if result:
+                now = time.time()
+                if now - self._last_detect > self._cooldown:
+                    self._last_detect = now
+                    log.info(f"🎯 唤醒词检测到! {result.strip()}")
+                    self.kws.reset_stream(self.stream)
                     on_wake()
+                else:
+                    self.kws.reset_stream(self.stream)
 
     def pause(self):
         self.paused = True
 
     def resume(self):
         self.paused = False
-        self.recognizer.Reset()
+        # 重建 stream 清除缓存状态
+        self.stream = self.kws.create_stream()
 
     def stop(self):
         self.active = False
