@@ -16,7 +16,7 @@ import subprocess
 import sys
 import threading
 import time
-import uuid
+# import uuid
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("xiaozhi")
@@ -34,13 +34,21 @@ WAKE_WORD = "乐迪"
 SHERPA_ASR_DIR = os.path.join(os.path.dirname(__file__), "models", "sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16", "96")
 
 def _contains_wake(text):
-    """模糊匹配唤醒词 — 检查两字组合是否听起来像目标唤醒词"""
-    # "乐迪" 的声母韵母相似字
-    first_chars = set("乐勒了落洛罗热")   # l/r 开头
-    second_chars = set("迪的地低底笛滴敌弟提")  # di/ti 韵母
-    for i in range(len(text) - 1):
-        if text[i] in first_chars and text[i+1] in second_chars:
-            return True
+    """更严格的唤醒词匹配：优先匹配“乐迪乐迪”，其次匹配两次“乐迪”近音组合"""
+    t = "".join(ch for ch in text if not ch.isspace())
+    if "乐迪乐迪" in t:
+        return True
+
+    # "乐迪" 的近音字（尽量保守，避免误触发）
+    first_chars = set("乐勒了")
+    second_chars = set("迪的地低")
+
+    pairs = 0
+    for i in range(len(t) - 1):
+        if t[i] in first_chars and t[i + 1] in second_chars:
+            pairs += 1
+            if pairs >= 2:
+                return True
     return False
 
 # ============================================================
@@ -132,7 +140,7 @@ class WakeWordListener:
                 continue
 
             read_count += 1
-            if read_count % 100 == 0:
+            if read_count % 300 == 0:
                 log.info(f"[debug] audio chunks: {read_count}, paused={self.paused}")
 
             if self.paused:
@@ -346,6 +354,9 @@ class XiaozhiClient:
         }
         await self.ws.send(json.dumps(detect))
 
+        # 给唤醒词尾音一个“泄放时间”，避免把“乐迪”当成用户提问
+        await asyncio.sleep(0.6)
+
         # 发开始监听
         start = {
             "session_id": self.session_id,
@@ -406,7 +417,8 @@ class XiaozhiClient:
 #  主程序
 # ============================================================
 async def main(ws_url: str):
-    device_id = f"pi-{uuid.uuid4().hex[:8]}"
+    # 使用固定 device_id，避免服务端把同一设备当新设备导致配置漂移
+    device_id = "pi-laosan-001"
     log.info(f"设备ID: {device_id}")
 
     client = XiaozhiClient(ws_url, device_id)

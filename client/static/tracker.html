@@ -229,23 +229,24 @@
             try {
                 const r = await fetch('/api/xiaozhi/logs');
                 const d = await r.json();
-                xiaozhiPanel.innerHTML = d.lines
-                    .filter(l => l.includes('[INFO]') || l.includes('[ERROR]'))
+                const shown = d.lines
+                    .filter(l => (l.includes('[INFO]') || l.includes('[ERROR]')) && !l.includes('[debug] audio chunks'));
+                xiaozhiPanel.innerHTML = shown
                     .map(l => {
                         let cls = '';
                         if (l.includes('唤醒') || l.includes('🎯')) cls = 'color:#ffeb3b';
-                        else if (l.includes('ERROR')) cls = 'color:#f44336';
-                        else if (l.includes('vosk:')) cls = 'color:#90caf9';
+                        else if (l.includes('ERROR') || l.includes('连接断开') || l.includes('连接失败')) cls = 'color:#f44336';
+                        else if (l.includes('asr:') || l.includes('asr final:') || l.includes('🎤 识别')) cls = 'color:#90caf9';
                         else if (l.includes('🤖') || l.includes('💬')) cls = 'color:#a5d6a7';
                         return `<div style="${cls}">${l.replace(/</g,'&lt;')}</div>`;
                     }).join('');
                 xiaozhiPanel.scrollTop = xiaozhiPanel.scrollHeight;
-                // 状态
-                const last = d.lines[d.lines.length-1] || '';
+                // 状态（从最近日志反推）
+                const last = shown[shown.length - 1] || '';
                 const st = document.getElementById('xiaozhiStatus');
-                if (last.includes('监听唤醒词')) st.textContent = '👂 监听中';
-                else if (last.includes('开始对话')) st.textContent = '🎙️ 对话中';
-                else if (last.includes('对话结束')) st.textContent = '✅ 完成';
+                if (last.includes('监听唤醒词') || last.includes('继续监听')) st.textContent = '👂 监听中';
+                else if (last.includes('录音中') || last.includes('开始对话') || last.includes('服务端开始说话')) st.textContent = '🎙️ 对话中';
+                else if (last.includes('停止录音') || last.includes('服务端说话结束')) st.textContent = '✅ 完成';
             } catch(e) {}
         }
         setInterval(pollXiaozhi, 2000);
