@@ -35,19 +35,12 @@ WAKE_WORD = "多多"
 SHERPA_ASR_DIR = os.path.join(os.path.dirname(__file__), "models", "sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16", "96")
 
 def _contains_wake(text):
-    """唤醒词匹配：多多（放宽）"""
+    """唤醒词匹配：多多（避免误触发）"""
     t = "".join(ch for ch in text if not ch.isspace())
     if "多多" in t:
         return True
-    # 容错1：多/哆 连续两次
-    for i in range(len(t) - 1):
-        if t[i] in ("多", "哆") and t[i + 1] in ("多", "哆"):
-            return True
-    # 容错2：句首单个“多”（例如“多，讲个故事”）
+    # 容错：句首“多/哆” + 后续短停顿（如“多，讲个故事”）
     if t.startswith("多") or t.startswith("哆"):
-        return True
-    # 容错3：任意位置出现单个“多/哆”也触发（提高灵敏度）
-    if "多" in t or "哆" in t:
         return True
     return False
 
@@ -521,7 +514,15 @@ async def main(ws_url: str):
                 if not client.is_listening and not client.is_speaking:
                     break
                 if time.time() - start_ts > 25:
-                    log.warning("恢复监听等待超时，强制恢复")
+                    log.warning("恢复监听等待超时，先中止服务端播报再恢复")
+                    try:
+                        fut = asyncio.run_coroutine_threadsafe(
+                            client.ws.send(json.dumps({"session_id": client.session_id, "type": "abort", "reason": "tts_timeout"})),
+                            loop,
+                        )
+                        fut.result(timeout=1)
+                    except Exception:
+                        pass
                     break
                 time.sleep(0.5)
             time.sleep(0.8)
