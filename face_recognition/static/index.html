@@ -32,7 +32,26 @@ body {
 }
 .app {
   width: 100%;
-  max-width: 860px;
+  max-width: 980px;
+}
+
+/* Eyes Bar */
+.eye-bar {
+  width: 100%;
+  height: 210px;
+  background: #000;
+  border: 1px solid rgba(34,168,255,0.18);
+  border-radius: 16px;
+  margin-bottom: 18px;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.2), inset 0 -20px 50px rgba(10,47,89,0.45);
+  overflow: hidden;
+}
+#eyesCanvas {
+  width: min(100%, 940px);
+  height: 190px;
+  display: block;
 }
 
 /* Header */
@@ -254,6 +273,10 @@ body {
 </head>
 <body>
 <div class="app">
+  <div class="eye-bar">
+    <canvas id="eyesCanvas" width="940" height="190"></canvas>
+  </div>
+
   <div class="header">
     <h1>👨‍👩‍👦 家庭人脸识别</h1>
     <p>上传照片，识别家庭成员</p>
@@ -422,6 +445,123 @@ function renderResults(data) {
     <div class="stat"><div class="stat-value">${data.count - knownCount}</div><div class="stat-label">未知</div></div>
     <div class="stat"><div class="stat-value">${data.time_ms}ms</div><div class="stat-label">耗时</div></div>`;
 }
+
+/* ===== 顶部机器人眼睛（参考 Web-Eye-Animation 的 emotion/move/target 语义）===== */
+(() => {
+  const canvas = document.getElementById('eyesCanvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+
+  const S = {
+    pan: 0, tilt: 20,
+    tx: 0, ty: 0,
+    mood: 'idle',
+    blink: 0,
+    nextBlink: performance.now() + 1200,
+    shake: 0,
+    winkL: false,
+    winkR: false,
+  };
+
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const lerp = (a, b, t) => a + (b - a) * t;
+
+  function drawEye(cx, cy, rx, ry, px, py, wink) {
+    const g = ctx.createRadialGradient(cx, cy, ry * 0.25, cx, cy, ry * 1.1);
+    g.addColorStop(0, '#21a8ff');
+    g.addColorStop(1, '#0a2f59');
+    ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2); ctx.fillStyle = g; ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2); ctx.strokeStyle = 'rgba(130,215,255,0.45)'; ctx.lineWidth = 2; ctx.stroke();
+
+    if (!wink) {
+      ctx.beginPath(); ctx.ellipse(cx + px, cy + py, rx * 0.30, ry * 0.30, 0, 0, Math.PI * 2); ctx.fillStyle = 'rgba(10,110,180,0.55)'; ctx.fill();
+      ctx.beginPath(); ctx.ellipse(cx + px, cy + py, rx * 0.17, ry * 0.17, 0, 0, Math.PI * 2); ctx.fillStyle = '#05111f'; ctx.fill();
+      ctx.beginPath(); ctx.arc(cx + px + 3, cy + py - 3, 3, 0, Math.PI * 2); ctx.fillStyle = '#8bd7ff'; ctx.fill();
+    } else {
+      ctx.beginPath(); ctx.moveTo(cx - rx * 0.55, cy); ctx.lineTo(cx + rx * 0.55, cy); ctx.strokeStyle = '#36b4ff'; ctx.lineWidth = 5; ctx.stroke();
+    }
+  }
+
+  function moodByText(text = '') {
+    const t = String(text).toLowerCase();
+    if (/哈哈|呵呵|有趣|调皮|搞笑|lol|haha/.test(t)) return 'playful';
+    if (/为什么|怎么|吗|？|\?/.test(t)) return 'confusion';
+    if (/困|累|晚安|睡/.test(t)) return 'sleepy';
+    return 'idle';
+  }
+
+  function emotion(name = 'idle') {
+    S.mood = String(name).toLowerCase();
+    if (['playful', 'joy', 'excitement'].includes(S.mood)) {
+      S.shake = 14;
+      S.winkL = Math.random() > 0.5;
+      S.winkR = !S.winkL;
+      setTimeout(() => { S.winkL = false; S.winkR = false; }, 260);
+    }
+  }
+
+  function frame(now) {
+    if (now > S.nextBlink) {
+      S.blink = 1;
+      S.nextBlink = now + 1600 + Math.random() * 2200;
+    }
+    S.blink = lerp(S.blink, 0, 0.16);
+    S.shake = lerp(S.shake, 0, 0.1);
+
+    const servoX = (S.pan / 180) * 22;
+    const servoY = ((S.tilt - 20) / 110) * 14;
+    const px = clamp(servoX + S.tx + Math.sin(now * 0.03) * S.shake, -34, 34);
+    const py = clamp(servoY + S.ty, -22, 22);
+
+    let eyeRy = 48 * (1 - S.blink * 0.9);
+    if (S.mood === 'sleepy') eyeRy *= 0.62;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    drawEye(330, 95, 100, eyeRy, px, py, S.winkL || S.blink > 0.75);
+    drawEye(610, 95, 100, eyeRy, px, py, S.winkR || S.blink > 0.75);
+
+    requestAnimationFrame(frame);
+  }
+
+  // 业务接口：舵机/对话可直接调用
+  window.setServoDirection = (pan, tilt) => {
+    S.pan = clamp(Number(pan) || 0, -180, 180);
+    S.tilt = clamp(Number(tilt) || 20, -30, 90);
+  };
+  window.onDialogText = (text) => emotion(moodByText(text));
+
+  // Web-Eye-Animation 风格兼容层
+  window.eyes = {
+    emotion,
+    move(x, y) {
+      const nx = ((x / Math.max(1, window.innerWidth)) - 0.5) * 2;
+      const ny = ((y / Math.max(1, window.innerHeight)) - 0.5) * 2;
+      S.tx = clamp(nx * 24, -28, 28);
+      S.ty = clamp(ny * 16, -18, 18);
+    },
+    target(x, y, z = 1000) {
+      const d = Math.max(100, z);
+      S.tx = clamp((x / d) * 60, -28, 28);
+      S.ty = clamp((y / d) * 60, -18, 18);
+    }
+  };
+
+  // 页面内联动：识别中更专注，识别完成更调皮
+  recognizeBtn.addEventListener('click', () => emotion('confusion'));
+  window.addEventListener('pointermove', (e) => window.eyes.move(e.clientX, e.clientY));
+
+  const oldRender = renderResults;
+  renderResults = function(data) {
+    oldRender(data);
+    if (data?.count > 0) emotion('joy');
+    else emotion('sleepy');
+  };
+
+  requestAnimationFrame(frame);
+})();
 </script>
 </body>
 </html>
