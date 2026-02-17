@@ -329,14 +329,14 @@ class XiaozhiClient:
             if state == "start":
                 self.is_speaking = True
                 log.info("🔊 服务端开始说话")
+                # 一旦服务端开始说话，立即停录，避免回声与打断
+                if self.is_listening:
+                    await self.stop_listening()
             elif state == "sentence_start":
                 log.info(f"💬 {msg.get('text', '')}")
             elif state == "stop":
                 self.is_speaking = False
                 log.info("🔊 服务端说话结束")
-                # 停止录音，让唤醒词监听恢复
-                if self.is_listening:
-                    await self.stop_listening()
         elif t == "stt":
             log.info(f"🎤 识别: {msg.get('text', '')}")
         elif t == "llm":
@@ -363,6 +363,18 @@ class XiaozhiClient:
                 err = self._play_proc.stderr.read(200) if self._play_proc.stderr else b""
                 log.error(f"aplay stderr: {err}")
             self._play_proc = None
+
+    async def announce_online(self):
+        """上线播报：使用服务端TTS播报"""
+        if not self.connected:
+            return
+        detect = {
+            "session_id": self.session_id,
+            "type": "listen",
+            "state": "detect",
+            "text": "请只回复：老三已上线",
+        }
+        await self.ws.send(json.dumps(detect))
 
     async def on_wake_word(self):
         """唤醒词触发：开始一轮对话"""
@@ -467,7 +479,8 @@ async def main(ws_url: str):
         log.error("连接失败，退出")
         return
 
-    speak_async("小机器人上线了")
+    # 用服务端TTS播报上线
+    await client.announce_online()
 
     # 唤醒词监听
     listener = WakeWordListener()
