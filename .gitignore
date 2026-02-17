@@ -13,3 +13,6 @@ build/
 .DS_Store
 ._*
 api.log
+*.log
+*.bak
+client/models/
