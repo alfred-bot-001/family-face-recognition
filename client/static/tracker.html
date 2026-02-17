@@ -97,7 +97,7 @@
                     <div class="tracking-info" id="trackingInfo"></div>
                 </div>
                 <div id="xiaozhiBox" style="background:#1a1a2e;border-top:1px solid #333;padding:8px 12px;max-height:150px;overflow-y:auto;font-size:0.85em;line-height:1.5">
-                    <div style="color:#888;margin-bottom:4px">🗣️ 小智对话 <span id="xiaozhiStatus" style="font-size:0.8em">✋ 等待手掌</span></div>
+                    <div style="color:#888;margin-bottom:4px">🗣️ 小智对话 <span id="xiaozhiStatus" style="font-size:0.8em">👂 监听中</span></div>
                     <div id="xiaozhiPanel" style="color:#b0e0b0"></div>
                 </div>
             </div>
@@ -245,9 +245,9 @@
                 // 状态（从最近日志反推）
                 const last = shown[shown.length - 1] || '';
                 const st = document.getElementById('xiaozhiStatus');
-                if (last.includes('手掌触发模式已启用') || last.includes('继续监听') || last.includes('监听唤醒词')) st.textContent = '✋ 等待手掌';
-                else if (last.includes('手掌出现') || last.includes('录音中') || last.includes('服务端开始说话')) st.textContent = '🎙️ 对话中';
-                else if (last.includes('手掌消失') || last.includes('停止录音') || last.includes('服务端说话结束')) st.textContent = '✅ 完成';
+                if (last.includes('监听唤醒词') || last.includes('继续监听')) st.textContent = '👂 监听中';
+                else if (last.includes('唤醒词触发') || last.includes('录音中') || last.includes('服务端开始说话')) st.textContent = '🎙️ 对话中';
+                else if (last.includes('停止录音') || last.includes('服务端说话结束')) st.textContent = '✅ 完成';
             } catch(e) {}
         }
         setInterval(pollXiaozhi, 2000);

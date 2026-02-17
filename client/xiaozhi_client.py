@@ -31,25 +31,17 @@ FRAME_DURATION_MS = 60
 FRAME_SIZE = SAMPLE_RATE * FRAME_DURATION_MS // 1000  # 960
 AUDIO_PLAY = "plughw:3,0"
 AUDIO_REC = "plughw:2,0"
-WAKE_WORD = "乐迪"
+WAKE_WORD = "小机器人"
 SHERPA_ASR_DIR = os.path.join(os.path.dirname(__file__), "models", "sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16", "96")
 
 def _contains_wake(text):
-    """更严格的唤醒词匹配：优先匹配“乐迪乐迪”，其次匹配两次“乐迪”近音组合"""
+    """唤醒词匹配：小机器人（含常见误识别容错）"""
     t = "".join(ch for ch in text if not ch.isspace())
-    if "乐迪乐迪" in t:
+    if "小机器人" in t:
         return True
-
-    # "乐迪" 的近音字（尽量保守，避免误触发）
-    first_chars = set("乐勒了")
-    second_chars = set("迪的地低")
-
-    pairs = 0
-    for i in range(len(t) - 1):
-        if t[i] in first_chars and t[i + 1] in second_chars:
-            pairs += 1
-            if pairs >= 2:
-                return True
+    # 容错：小机/小鸡 + 人/仁 + 机/器/七 + 人
+    if ("小机" in t or "小鸡" in t) and ("人" in t or "仁" in t) and ("器人" in t or "七人" in t or "机人" in t):
+        return True
     return False
 
 # ============================================================
@@ -371,19 +363,18 @@ class XiaozhiClient:
                 log.error(f"aplay stderr: {err}")
             self._play_proc = None
 
-    async def on_palm_start(self):
-        """手掌出现：开始录音对话"""
+    async def on_wake_word(self):
+        """唤醒词触发：开始一轮对话"""
         if not self.connected:
-            log.warning("未连接，忽略手掌触发")
+            log.warning("未连接，忽略唤醒")
             return
         if self.is_listening:
             return
 
-        log.info("✋ 手掌出现，开始录音")
+        log.info(f"🎙️ 唤醒词触发，开始对话: {WAKE_WORD}")
 
-        # 如果服务端在说话，先打断
         if self.is_speaking:
-            abort = {"session_id": self.session_id, "type": "abort", "reason": "palm_detected"}
+            abort = {"session_id": self.session_id, "type": "abort", "reason": "wake_word_detected"}
             await self.ws.send(json.dumps(abort))
             if self._play_proc:
                 try:
@@ -391,6 +382,16 @@ class XiaozhiClient:
                 except Exception:
                     pass
                 self._play_proc = None
+
+        detect = {
+            "session_id": self.session_id,
+            "type": "listen",
+            "state": "detect",
+            "text": WAKE_WORD,
+        }
+        await self.ws.send(json.dumps(detect))
+
+        await asyncio.sleep(0.6)
 
         start = {
             "session_id": self.session_id,
@@ -402,13 +403,6 @@ class XiaozhiClient:
 
         self.is_listening = True
         self._send_task = asyncio.create_task(self._record_and_send())
-
-    async def on_palm_end(self):
-        """手掌消失：停止录音并等待服务端回复"""
-        if not self.is_listening:
-            return
-        log.info("🖐️ 手掌消失，结束录音")
-        await self.stop_listening()
 
     async def _record_and_send(self):
         """录音并通过 WebSocket 发送 Opus 帧"""
@@ -468,19 +462,27 @@ async def main(ws_url: str):
         log.error("连接失败，退出")
         return
 
-    speak_async("手掌对话模式上线了")
+    speak_async("小机器人上线了")
 
-    # 手掌触发监听（来自 face_tracker 的手势识别结果）
+    # 唤醒词监听
+    listener = WakeWordListener()
     loop = asyncio.get_event_loop()
-    palm_listener = PalmGestureListener(status_url="http://127.0.0.1:5000/api/status")
 
-    def on_palm_start():
-        asyncio.run_coroutine_threadsafe(client.on_palm_start(), loop)
+    def on_wake():
+        listener.pause()
+        asyncio.run_coroutine_threadsafe(client.on_wake_word(), loop)
 
-    def on_palm_end():
-        asyncio.run_coroutine_threadsafe(client.on_palm_end(), loop)
+        def wait_and_resume():
+            time.sleep(2)
+            while client.is_listening or client.is_speaking:
+                time.sleep(0.5)
+            time.sleep(0.8)
+            listener.resume()
+            log.info(f"👂 继续监听: {WAKE_WORD}")
 
-    palm_listener.start(on_palm_start, on_palm_end)
+        threading.Thread(target=wait_and_resume, daemon=True).start()
+
+    listener.start(on_wake)
 
     # 消息循环（保持长连接）
     await client.message_loop()
