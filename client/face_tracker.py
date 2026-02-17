@@ -334,7 +334,8 @@ flask_app = Flask(__name__, static_folder="static")
 
 
 def draw_tracking_results(frame: np.ndarray, faces: list[dict],
-                          tracking_name: str | None) -> np.ndarray:
+                          tracking_name: str | None,
+                          gesture: dict | None = None) -> np.ndarray:
     """在帧上绘制识别结果，高亮跟踪目标"""
     annotated = frame.copy()
     for f in faces:
@@ -364,8 +365,27 @@ def draw_tracking_results(frame: np.ndarray, faces: list[dict],
         cv2.putText(annotated, label, (x1, y1 - 4),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
 
-    # 画中心十字准星
+    # 手势标注（与人脸同帧显示）
     h, w = annotated.shape[:2]
+    if gesture:
+        gname = gesture.get("gesture", "none")
+        hands = gesture.get("hands_count", 0)
+        color = (0, 255, 255) if gname == "open_palm" else (255, 200, 0)
+        text = f"Gesture: {gname} ({hands} hand)"
+        cv2.putText(annotated, text, (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+
+        for hi in gesture.get("hand_landmarks", []):
+            bbox = hi.get("bbox")
+            if bbox and len(bbox) == 4:
+                x1 = int(bbox[0] * w)
+                y1 = int(bbox[1] * h)
+                x2 = int(bbox[2] * w)
+                y2 = int(bbox[3] * h)
+                cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+                cv2.putText(annotated, hi.get("gesture", gname), (x1, max(18, y1 - 6)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
+
+    # 画中心十字准星
     cx, cy = w // 2, h // 2
     cv2.line(annotated, (cx - 15, cy), (cx + 15, cy), (255, 255, 255), 1)
     cv2.line(annotated, (cx, cy - 15), (cx, cy + 15), (255, 255, 255), 1)
@@ -489,7 +509,7 @@ def camera_tracking_loop(api_url: str, camera_id: int, width: int, height: int,
         # 非识别帧：用上次结果更新显示
         if now - last_send < frame_interval:
             with lock:
-                latest_frame = draw_tracking_results(frame, latest_results, tracker.tracking_name)
+                latest_frame = draw_tracking_results(frame, latest_results, tracker.tracking_name, gesture)
                 tracker_status["gesture"] = gesture
             continue
 
@@ -519,7 +539,7 @@ def camera_tracking_loop(api_url: str, camera_id: int, width: int, height: int,
 
                 with lock:
                     latest_results = faces
-                    latest_frame = draw_tracking_results(frame, faces, tracker.tracking_name)
+                    latest_frame = draw_tracking_results(frame, faces, tracker.tracking_name, gesture)
                     tracker_status = {
                         "tracking": tracker.tracking_name,
                         "confidence": round(tracker.tracking_confidence, 3),
@@ -543,7 +563,7 @@ def camera_tracking_loop(api_url: str, camera_id: int, width: int, height: int,
                 add_log("ERROR", f"API 连接失败: {e}")
             with lock:
                 latest_results = []
-                latest_frame = draw_tracking_results(frame, [], None)
+                latest_frame = draw_tracking_results(frame, [], None, gesture)
 
     close_camera(cam_type, cam_obj)
     gimbal.center()
