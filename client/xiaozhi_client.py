@@ -46,6 +46,9 @@ def _contains_wake(text):
     # 容错2：句首单个“多”（例如“多，讲个故事”）
     if t.startswith("多") or t.startswith("哆"):
         return True
+    # 容错3：任意位置出现单个“多/哆”也触发（提高灵敏度）
+    if "多" in t or "哆" in t:
+        return True
     return False
 
 # ============================================================
