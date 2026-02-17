@@ -383,14 +383,8 @@ class XiaozhiClient:
                     pass
                 self._play_proc = None
 
-        detect = {
-            "session_id": self.session_id,
-            "type": "listen",
-            "state": "detect",
-            "text": WAKE_WORD,
-        }
-        await self.ws.send(json.dumps(detect))
-
+        # 关键修复：不再发送 detect(text=唤醒词)
+        # 某些服务端配置会把 detect.text 当用户问题，导致还没说指令就开始回答。
         await asyncio.sleep(0.6)
 
         start = {
@@ -414,12 +408,19 @@ class XiaozhiClient:
         )
         loop = asyncio.get_event_loop()
         log.info("🎙️ 录音中...")
+        # 丢弃起始约0.7秒，避免把唤醒词尾音当成用户指令
+        warmup_frames = 12
+        sent_frames = 0
         try:
             while self.is_listening and self.connected:
                 data = await loop.run_in_executor(None, self._rec_proc.stdout.read, frame_bytes)
                 if len(data) == frame_bytes:
+                    if warmup_frames > 0:
+                        warmup_frames -= 1
+                        continue
                     opus = pcm_to_opus(data)
                     await self.ws.send(opus)
+                    sent_frames += 1
         except Exception as e:
             log.error(f"录音发送错误: {e}")
         finally:
