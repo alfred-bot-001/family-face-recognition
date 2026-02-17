@@ -77,12 +77,13 @@ def speak_async(text: str):
 #  唤醒词检测 (sherpa-onnx 流式ASR + 模糊匹配)
 # ============================================================
 class WakeWordListener:
-    def __init__(self, device=AUDIO_REC):
+    def __init__(self, device=AUDIO_REC, should_pause_fn=None):
         import sherpa_onnx
         import numpy as np
         self.sherpa_onnx = sherpa_onnx
         self.np = np
         self.device = device
+        self.should_pause_fn = should_pause_fn
         self.paused = False
         self.active = True
         self._proc = None
@@ -115,8 +116,15 @@ class WakeWordListener:
         last_text = ""
 
         while self.active:
-            # 等待非暂停状态
-            if self.paused:
+            # 等待非暂停状态（包括：服务端正在说话）
+            if self.paused or (self.should_pause_fn and self.should_pause_fn()):
+                # 服务端说话期间释放麦克风，避免把TTS回声识别成ASR文本
+                if self._proc is not None:
+                    try:
+                        self._proc.terminate()
+                    except Exception:
+                        pass
+                    self._proc = None
                 time.sleep(0.1)
                 continue
 
@@ -495,7 +503,7 @@ async def main(ws_url: str):
         await asyncio.sleep(0.2)
 
     # 唤醒词监听
-    listener = WakeWordListener()
+    listener = WakeWordListener(should_pause_fn=lambda: client.is_speaking or client.is_listening)
     loop = asyncio.get_event_loop()
 
     def on_wake():
