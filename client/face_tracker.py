@@ -309,7 +309,7 @@ class FaceTracker:
 #  主循环（摄像头 + API + 跟踪 + Web）
 # ============================================================
 
-from flask import Flask, Response, jsonify, send_from_directory
+from flask import Flask, Response, jsonify, send_from_directory, request
 from gesture_detector import GestureDetector
 
 # 全局状态
@@ -331,6 +331,34 @@ def add_log(level: str, msg: str):
     print(f"[{level}] {ts} {msg}")
 
 flask_app = Flask(__name__, static_folder="static")
+
+# 舵机表情动作节流
+_last_happy_ts = 0.0
+_last_online_ts = 0.0
+_motion_lock = threading.Lock()
+
+def gimbal_happy_swing(gimbal: GimbalController, amp: float = 6.0, step_delay: float = 0.18):
+    """开心动作：左右轻摆"""
+    if not getattr(gimbal, "connected", False):
+        return
+    with _motion_lock:
+        base_pan = gimbal.pan_angle
+        base_tilt = gimbal.tilt_angle
+        for dx in [amp, -amp, amp * 0.6, -amp * 0.6, 0]:
+            gimbal.move_to(base_pan + dx, base_tilt, speed=12, acc=3)
+            time.sleep(step_delay)
+
+def gimbal_online_nod(gimbal: GimbalController, amp: float = 4.0, step_delay: float = 0.2):
+    """我在动作：轻微点头"""
+    if not getattr(gimbal, "connected", False):
+        return
+    with _motion_lock:
+        base_pan = gimbal.pan_angle
+        base_tilt = gimbal.tilt_angle
+        for dy in [amp, -amp * 0.6, amp * 0.4, 0]:
+            gimbal.move_to(base_pan, base_tilt + dy, speed=10, acc=2)
+            time.sleep(step_delay)
+
 
 
 def draw_tracking_results(frame: np.ndarray, faces: list[dict],
@@ -537,6 +565,15 @@ def camera_tracking_loop(api_url: str, camera_id: int, width: int, height: int,
                 # 语音问候
                 greeter.check_faces(faces)
 
+                # 看到小虎（son）做开心动作（节流）
+                global _last_happy_ts
+                if any(f.get("name") == "son" for f in faces):
+                    now_ts = time.time()
+                    if now_ts - _last_happy_ts > 6.0:
+                        _last_happy_ts = now_ts
+                        threading.Thread(target=gimbal_happy_swing, args=(gimbal,), daemon=True).start()
+                        add_log("INFO", "😊 看到小虎，云台开心摆动")
+
                 with lock:
                     latest_results = faces
                     latest_frame = draw_tracking_results(frame, faces, tracker.tracking_name, gesture)
@@ -622,6 +659,28 @@ def gimbal_center():
     """手动回中"""
     gimbal_instance.center()
     return jsonify({"ok": True})
+
+
+@flask_app.route("/api/gimbal/express", methods=["POST"])
+def gimbal_express():
+    """触发表情动作: happy | online"""
+    global _last_happy_ts, _last_online_ts
+    data = request.get_json(silent=True) or {}
+    action = (data.get("action") or "").strip()
+
+    if action == "happy":
+        if time.time() - _last_happy_ts > 1.0:
+            _last_happy_ts = time.time()
+            threading.Thread(target=gimbal_happy_swing, args=(gimbal_instance,), daemon=True).start()
+        return jsonify({"ok": True, "action": "happy"})
+
+    if action == "online":
+        if time.time() - _last_online_ts > 1.0:
+            _last_online_ts = time.time()
+            threading.Thread(target=gimbal_online_nod, args=(gimbal_instance,), daemon=True).start()
+        return jsonify({"ok": True, "action": "online"})
+
+    return jsonify({"ok": False, "error": "invalid action"}), 400
 
 
 @flask_app.route("/api/volume", methods=["GET"])

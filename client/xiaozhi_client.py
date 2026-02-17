@@ -385,6 +385,11 @@ class XiaozhiClient:
             return
 
         log.info(f"🎙️ 唤醒词触发，开始对话: {WAKE_WORD}")
+        # 唤醒时触发云台“我在”动作
+        try:
+            requests.post("http://127.0.0.1:5000/api/gimbal/express", json={"action": "online"}, timeout=0.4)
+        except Exception:
+            pass
 
         if self.is_speaking:
             abort = {"session_id": self.session_id, "type": "abort", "reason": "wake_word_detected"}
