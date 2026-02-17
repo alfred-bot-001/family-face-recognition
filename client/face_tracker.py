@@ -334,6 +334,7 @@ flask_app = Flask(__name__, static_folder="static")
 
 # 舵机表情动作节流
 _last_happy_ts = 0.0
+_last_happy_day = ""
 _last_online_ts = 0.0
 _motion_lock = threading.Lock()
 
@@ -565,14 +566,15 @@ def camera_tracking_loop(api_url: str, camera_id: int, width: int, height: int,
                 # 语音问候
                 greeter.check_faces(faces)
 
-                # 看到小虎（son）做开心动作（节流）
-                global _last_happy_ts
+                # 看到小虎（son）做开心动作（每天一次）
+                global _last_happy_ts, _last_happy_day
                 if any(f.get("name") == "son" for f in faces):
-                    now_ts = time.time()
-                    if now_ts - _last_happy_ts > 6.0:
-                        _last_happy_ts = now_ts
+                    today = time.strftime("%Y-%m-%d")
+                    if _last_happy_day != today:
+                        _last_happy_day = today
+                        _last_happy_ts = time.time()
                         threading.Thread(target=gimbal_happy_swing, args=(gimbal,), daemon=True).start()
-                        add_log("INFO", "😊 看到小虎，云台开心摆动")
+                        add_log("INFO", "😊 看到小虎，今日首次开心摆动")
 
                 with lock:
                     latest_results = faces
