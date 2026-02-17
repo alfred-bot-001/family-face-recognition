@@ -513,16 +513,8 @@ async def main(ws_url: str):
             while True:
                 if not client.is_listening and not client.is_speaking:
                     break
-                if time.time() - start_ts > 25:
-                    log.warning("恢复监听等待超时，先中止服务端播报再恢复")
-                    try:
-                        fut = asyncio.run_coroutine_threadsafe(
-                            client.ws.send(json.dumps({"session_id": client.session_id, "type": "abort", "reason": "tts_timeout"})),
-                            loop,
-                        )
-                        fut.result(timeout=1)
-                    except Exception:
-                        pass
+                if time.time() - start_ts > 120:
+                    log.warning("恢复监听等待超时(120s)，强制恢复")
                     break
                 time.sleep(0.5)
             time.sleep(0.8)
