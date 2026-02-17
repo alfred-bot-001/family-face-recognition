@@ -35,14 +35,17 @@ WAKE_WORD = "多多"
 SHERPA_ASR_DIR = os.path.join(os.path.dirname(__file__), "models", "sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16", "96")
 
 def _contains_wake(text):
-    """唤醒词匹配：多多（容错）"""
+    """唤醒词匹配：多多（放宽）"""
     t = "".join(ch for ch in text if not ch.isspace())
     if "多多" in t:
         return True
-    # 容错：多/哆 连续两次
+    # 容错1：多/哆 连续两次
     for i in range(len(t) - 1):
         if t[i] in ("多", "哆") and t[i + 1] in ("多", "哆"):
             return True
+    # 容错2：句首单个“多”（例如“多，讲个故事”）
+    if t.startswith("多") or t.startswith("哆"):
+        return True
     return False
 
 # ============================================================
