@@ -481,6 +481,10 @@ async def main(ws_url: str):
 
     # 用服务端TTS播报上线
     await client.announce_online()
+    # 等播报结束再开唤醒监听，避免把播报内容识别成用户语音
+    await asyncio.sleep(0.5)
+    while client.is_speaking:
+        await asyncio.sleep(0.2)
 
     # 唤醒词监听
     listener = WakeWordListener()
