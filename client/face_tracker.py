@@ -1084,6 +1084,7 @@ def make_placeholder_frame(width, height, text="摄像头未连接"):
 def camera_tracking_loop(api_url, camera_id, width, height, fps_limit, gimbal, greeter, gesture_det):
     global latest_frame, latest_results, tracker_status, is_running
     global _last_happy_ts, _last_happy_day
+    global last_activity_time, camera_sleeping
 
     tracker = FaceTracker(api_url, gimbal, width, height)
     cam_type, cam_obj = open_camera(camera_id, width, height)
