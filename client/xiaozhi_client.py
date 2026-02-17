@@ -473,8 +473,15 @@ async def main(ws_url: str):
         asyncio.run_coroutine_threadsafe(client.on_wake_word(), loop)
 
         def wait_and_resume():
+            # 防卡死：最多等待25秒，超时也强制恢复监听
+            start_ts = time.time()
             time.sleep(2)
-            while client.is_listening or client.is_speaking:
+            while True:
+                if not client.is_listening and not client.is_speaking:
+                    break
+                if time.time() - start_ts > 25:
+                    log.warning("恢复监听等待超时，强制恢复")
+                    break
                 time.sleep(0.5)
             time.sleep(0.8)
             listener.resume()
