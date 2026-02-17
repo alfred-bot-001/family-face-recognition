@@ -29,9 +29,11 @@ SAMPLE_RATE = 16000
 CHANNELS = 1
 FRAME_DURATION_MS = 60
 FRAME_SIZE = SAMPLE_RATE * FRAME_DURATION_MS // 1000  # 960
-AUDIO_PLAY = "plughw:3,0"
-AUDIO_REC = "plughw:2,0"
+AUDIO_PLAY = "plughw:3,0"   # USB PnP Audio Device 扬声器
+AUDIO_REC = "plughw:5,0"    # M2 麦克风阵列录音
 WAKE_WORD = "多多"
+M2_SERIAL = "/dev/ttyACM1"  # M2 串口 (硬件唤醒词)
+M2_BAUD = 115200
 SHERPA_ASR_DIR = os.path.join(os.path.dirname(__file__), "models", "sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16", "96")
 
 def _contains_wake(text):
@@ -70,7 +72,83 @@ def speak_async(text: str):
     threading.Thread(target=speak, args=(text,), daemon=True).start()
 
 # ============================================================
-#  唤醒词检测 (sherpa-onnx 流式ASR + 模糊匹配)
+#  M2 硬件唤醒词检测 (串口读取 type=0x04 唤醒帧)
+# ============================================================
+class M2WakeWordListener:
+    """通过 M2 麦克风阵列串口检测硬件唤醒词"""
+    def __init__(self, port=M2_SERIAL, baud=M2_BAUD, should_pause_fn=None):
+        import serial as _serial
+        self.ser = _serial.Serial(port, baud, timeout=0.5)
+        self.should_pause_fn = should_pause_fn
+        self.paused = False
+        self.active = True
+        self._cooldown = 2.0
+        self._last_detect = 0
+        log.info(f"M2 硬件唤醒词监听已初始化: {port}")
+
+    def start(self, on_wake):
+        threading.Thread(target=self._listen, args=(on_wake,), daemon=True).start()
+
+    def _listen(self, on_wake):
+        buf = b""
+        while self.active:
+            if self.paused or (self.should_pause_fn and self.should_pause_fn()):
+                time.sleep(0.1)
+                # drain serial buffer while paused
+                if self.ser.in_waiting > 0:
+                    self.ser.reset_input_buffer()
+                continue
+            try:
+                data = self.ser.read(64)
+                if not data:
+                    continue
+                buf += data
+                # parse frames: header 0xA5, type at offset 1
+                while len(buf) >= 6:
+                    idx = buf.find(b'\xa5')
+                    if idx < 0:
+                        buf = b""
+                        break
+                    if idx > 0:
+                        buf = buf[idx:]
+                    if len(buf) < 6:
+                        break
+                    frame_type = buf[1]
+                    if frame_type == 0x04:
+                        # wake word detected!
+                        now = time.time()
+                        if now - self._last_detect > self._cooldown:
+                            self._last_detect = now
+                            log.info(f"🎯 M2 硬件唤醒词触发!")
+                            on_wake()
+                        buf = buf[6:]
+                    elif frame_type == 0x01:
+                        # heartbeat, skip
+                        buf = buf[6:]
+                    else:
+                        buf = buf[1:]
+            except Exception as e:
+                log.error(f"M2 串口读取错误: {e}")
+                time.sleep(0.5)
+
+    def pause(self):
+        self.paused = True
+
+    def resume(self):
+        self.paused = False
+        if self.ser.in_waiting > 0:
+            self.ser.reset_input_buffer()
+
+    def stop(self):
+        self.active = False
+        try:
+            self.ser.close()
+        except Exception:
+            pass
+
+
+# ============================================================
+#  唤醒词检测 (sherpa-onnx 流式ASR + 模糊匹配) [备用]
 # ============================================================
 class WakeWordListener:
     def __init__(self, device=AUDIO_REC, should_pause_fn=None):
@@ -495,6 +573,7 @@ async def main(ws_url: str):
     device_id = "pi-laosan-001"
     log.info(f"设备ID: {device_id}")
 
+    first_connect = True
     while True:
         client = XiaozhiClient(ws_url, device_id)
 
@@ -504,15 +583,21 @@ async def main(ws_url: str):
             await asyncio.sleep(3)
             continue
 
-        # 用服务端TTS播报上线
-        await client.announce_online()
+        # 仅首次连接播报上线，重连不重复
+        if first_connect:
+            await client.announce_online()
+            first_connect = False
         # 等播报结束再开唤醒监听，避免把播报内容识别成用户语音
         await asyncio.sleep(0.5)
         while client.is_speaking:
             await asyncio.sleep(0.2)
 
-        # 唤醒词监听
-        listener = WakeWordListener(should_pause_fn=lambda: client.is_speaking or client.is_listening)
+        # 唤醒词监听 (M2 硬件唤醒词)
+        try:
+            listener = M2WakeWordListener(should_pause_fn=lambda: client.is_speaking or client.is_listening)
+        except Exception as e:
+            log.warning(f"M2 硬件唤醒不可用({e})，回退到 sherpa-onnx")
+            listener = WakeWordListener(should_pause_fn=lambda: client.is_speaking or client.is_listening)
         loop = asyncio.get_event_loop()
 
         def on_wake():
