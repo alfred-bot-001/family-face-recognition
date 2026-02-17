@@ -40,6 +40,7 @@ WAVE_GREET_COOLDOWN = 10  # 手势问候冷却（秒）
 # 舵机参数（与 ugv_rpi/cv_ctrl.py 机械限位一致）
 PAN_MIN, PAN_MAX = -180, 180      # 水平范围
 TILT_MIN, TILT_MAX = -30, 90      # 垂直范围
+PAN_OFFSET = -40                  # 下位机 pan 零点偏移（读到 -40 时物理实际为 0°）
 TRACK_ITERATE = 0.045             # 跟踪步进系数
 TRACK_SPD_RATE = 60               # 速度系数
 TRACK_ACC_RATE = 0.4              # 加速度系数
@@ -158,6 +159,28 @@ class GimbalController:
         self.pan_angle = 0.0    # 当前水平角度
         self.tilt_angle = 0.0   # 当前垂直角度
         self.lock = threading.Lock()
+
+        # 启动下位机反馈读取线程
+        if self.connected:
+            self._feedback_thread = threading.Thread(target=self._read_feedback, daemon=True)
+            self._feedback_thread.start()
+
+    def _read_feedback(self):
+        """持续从串口读取下位机 T=1001 反馈，更新真实 pan/tilt"""
+        while self.connected:
+            try:
+                if self.ser.in_waiting > 0:
+                    line = self.ser.readline()
+                    if line:
+                        data = json.loads(line.decode('utf-8', errors='replace').strip())
+                        if data.get('T') == 1001 and 'pan' in data and 'tilt' in data:
+                            with self.lock:
+                                self.pan_angle = data['pan']
+                                self.tilt_angle = data['tilt']
+                else:
+                    time.sleep(0.02)
+            except Exception:
+                time.sleep(0.05)
 
     def send_command(self, data: dict):
         """发送 JSON 指令到底盘"""
@@ -582,7 +605,7 @@ def camera_tracking_loop(api_url: str, camera_id: int, width: int, height: int,
                     tracker_status = {
                         "tracking": tracker.tracking_name,
                         "confidence": round(tracker.tracking_confidence, 3),
-                        "pan": round(gimbal.pan_angle, 1),
+                        "pan": round(gimbal.pan_angle - PAN_OFFSET, 1),
                         "tilt": round(gimbal.tilt_angle, 1),
                         "faces_count": len(faces),
                         "known_count": len([f for f in faces if f.get("name") != "unknown"]),
@@ -661,6 +684,16 @@ def gimbal_center():
     """手动回中"""
     gimbal_instance.center()
     return jsonify({"ok": True})
+
+
+@flask_app.route("/api/gimbal/calibrate", methods=["POST"])
+def gimbal_calibrate():
+    """校准：把当前物理位置标记为 0°（只重置软件值，不动舵机）"""
+    with gimbal_instance.lock:
+        gimbal_instance.pan_angle = 0.0
+        gimbal_instance.tilt_angle = 0.0
+    add_log("INFO", "🔧 舵机校准：当前位置已标记为 0°")
+    return jsonify({"ok": True, "pan": 0, "tilt": 0})
 
 
 @flask_app.route("/api/gimbal/express", methods=["POST"])

@@ -6,314 +6,97 @@
     <title>家庭人脸识别 - 实时监控</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background: #0f0f0f;
-            color: #e0e0e0;
-            min-height: 100vh;
-        }
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 16px;
-        }
-        header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 12px 0;
-            border-bottom: 1px solid #333;
-            margin-bottom: 16px;
-        }
-        header h1 {
-            font-size: 1.4rem;
-            font-weight: 600;
-        }
-        .status-bar {
-            display: flex;
-            gap: 16px;
-            font-size: 0.85rem;
-        }
-        .status-item {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-        .dot {
-            width: 8px; height: 8px;
-            border-radius: 50%;
-            background: #666;
-        }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f0f0f; color: #e0e0e0; min-height: 100vh; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 16px; }
+        .eye-bar { width: 100%; height: 132px; background: radial-gradient(120% 140% at 50% 0%, #111 0%, #020202 60%, #000 100%); border: 1px solid #1f2937; border-radius: 14px; margin-bottom: 14px; overflow: hidden; position: relative; }
+        #eyesCanvas { width: 100%; height: 100%; display: block; }
+        .servo-overlay { position: absolute; right: 10px; top: 10px; background: rgba(0,0,0,.6); border: 1px solid rgba(59,130,246,.35); color: #93c5fd; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; border-radius: 8px; padding: 6px 9px; }
+        header { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #333; margin-bottom: 16px; }
+        header h1 { font-size: 1.4rem; font-weight: 600; }
+        .status-bar { display: flex; gap: 16px; font-size: 0.85rem; }
+        .status-item { display: flex; align-items: center; gap: 6px; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; background: #666; }
         .dot.online { background: #4caf50; }
         .dot.offline { background: #f44336; }
-        .main-content {
-            display: grid;
-            grid-template-columns: 1fr 320px;
-            gap: 16px;
-        }
-        .video-panel {
-            background: #1a1a1a;
-            border-radius: 12px;
-            overflow: hidden;
-            position: relative;
-        }
-        .video-panel img {
-            width: 100%;
-            display: block;
-            aspect-ratio: 4/3;
-            object-fit: contain;
-            background: #000;
-        }
-        .fps-overlay {
-            position: absolute;
-            top: 8px; left: 8px;
-            background: rgba(0,0,0,0.7);
-            padding: 4px 10px;
-            border-radius: 6px;
-            font-size: 0.8rem;
-            font-family: monospace;
-        }
-        .sidebar {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-        }
-        .card {
-            background: #1a1a1a;
-            border-radius: 12px;
-            padding: 16px;
-        }
-        .card h2 {
-            font-size: 1rem;
-            font-weight: 600;
-            margin-bottom: 12px;
-            color: #aaa;
-        }
-        .face-list {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-        .face-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 10px 12px;
-            background: #252525;
-            border-radius: 8px;
-            border-left: 3px solid #4caf50;
-        }
-        .face-item.unknown {
-            border-left-color: #f44336;
-        }
-        .face-name {
-            font-weight: 600;
-            font-size: 1rem;
-        }
-        .face-conf {
-            font-size: 0.85rem;
-            color: #888;
-        }
-        .face-meta {
-            font-size: 0.75rem;
-            color: #666;
-            margin-top: 2px;
-        }
-        .no-faces {
-            color: #555;
-            text-align: center;
-            padding: 20px;
-            font-size: 0.9rem;
-        }
-        .stats-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 8px;
-        }
-        .stat {
-            text-align: center;
-            padding: 8px;
-            background: #252525;
-            border-radius: 8px;
-        }
-        .stat-value {
-            font-size: 1.4rem;
-            font-weight: 700;
-            color: #4caf50;
-        }
-        .stat-label {
-            font-size: 0.7rem;
-            color: #666;
-            margin-top: 2px;
-        }
-        .log {
-            max-height: 200px;
-            overflow-y: auto;
-            font-size: 0.75rem;
-            font-family: monospace;
-            color: #666;
-        }
-        .log-entry {
-            padding: 2px 0;
-            border-bottom: 1px solid #222;
-        }
+        .main-content { display: grid; grid-template-columns: 1fr 320px; gap: 16px; }
+        .video-panel { background: #1a1a1a; border-radius: 12px; overflow: hidden; position: relative; }
+        .video-panel img { width: 100%; display: block; aspect-ratio: 4/3; object-fit: contain; background: #000; }
+        .fps-overlay { position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,0.7); padding: 4px 10px; border-radius: 6px; font-size: 0.8rem; font-family: monospace; }
+        .sidebar { display: flex; flex-direction: column; gap: 12px; }
+        .card { background: #1a1a1a; border-radius: 12px; padding: 16px; }
+        .card h2 { font-size: 1rem; font-weight: 600; margin-bottom: 12px; color: #aaa; }
+        .face-list { display: flex; flex-direction: column; gap: 8px; }
+        .face-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; background: #252525; border-radius: 8px; border-left: 3px solid #4caf50; }
+        .face-item.unknown { border-left-color: #f44336; }
+        .face-name { font-weight: 600; font-size: 1rem; }
+        .face-conf { font-size: 0.85rem; color: #888; }
+        .face-meta { font-size: 0.75rem; color: #666; margin-top: 2px; }
+        .no-faces { color: #555; text-align: center; padding: 20px; font-size: 0.9rem; }
+        .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .stat { text-align: center; padding: 8px; background: #252525; border-radius: 8px; }
+        .stat-value { font-size: 1.4rem; font-weight: 700; color: #4caf50; }
+        .stat-label { font-size: 0.7rem; color: #666; margin-top: 2px; }
+        .log { max-height: 200px; overflow-y: auto; font-size: 0.75rem; font-family: monospace; color: #666; }
+        .log-entry { padding: 2px 0; border-bottom: 1px solid #222; }
         .log-entry .time { color: #555; }
         .log-entry .name { color: #4caf50; font-weight: 600; }
-
-        @media (max-width: 768px) {
-            .main-content {
-                grid-template-columns: 1fr;
-            }
-        }
+        @media (max-width: 768px) { .main-content { grid-template-columns: 1fr; } .eye-bar { height: 110px; } }
     </style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>👨‍👩‍👦 家庭人脸识别</h1>
-            <div class="status-bar">
-                <div class="status-item">
-                    <div class="dot" id="statusDot"></div>
-                    <span id="statusText">连接中...</span>
-                </div>
-            </div>
-        </header>
-
-        <div class="main-content">
-            <div class="video-panel">
-                <img id="videoStream" src="/video_feed" alt="视频流">
-                <div class="fps-overlay">
-                    <span id="fpsText">-- FPS</span>
-                </div>
-            </div>
-
-            <div class="sidebar">
-                <div class="card">
-                    <h2>📊 状态</h2>
-                    <div class="stats-grid">
-                        <div class="stat">
-                            <div class="stat-value" id="recFps">--</div>
-                            <div class="stat-label">识别 FPS</div>
-                        </div>
-                        <div class="stat">
-                            <div class="stat-value" id="camFps">--</div>
-                            <div class="stat-label">摄像头 FPS</div>
-                        </div>
-                        <div class="stat">
-                            <div class="stat-value" id="faceCount">0</div>
-                            <div class="stat-label">检测人脸</div>
-                        </div>
-                        <div class="stat">
-                            <div class="stat-value" id="knownCount">0</div>
-                            <div class="stat-label">已识别</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <h2>🧑 识别结果</h2>
-                    <div class="face-list" id="faceList">
-                        <div class="no-faces">等待识别...</div>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <h2>📝 识别日志</h2>
-                    <div class="log" id="logPanel"></div>
-                </div>
-            </div>
+<div class="container">
+    <div class="eye-bar"><canvas id="eyesCanvas"></canvas><div class="servo-overlay" id="servoText">pan: --°<br>tilt: --°</div></div>
+    <header><h1>👨👩👦 家庭人脸识别</h1><div class="status-bar"><div class="status-item"><div class="dot" id="statusDot"></div><span id="statusText">连接中...</span></div></div></header>
+    <div class="main-content">
+        <div class="video-panel"><img id="videoStream" src="/video_feed" alt="视频流"><div class="fps-overlay"><span id="fpsText">-- FPS</span></div></div>
+        <div class="sidebar">
+            <div class="card"><h2>📊 状态</h2><div class="stats-grid"><div class="stat"><div class="stat-value" id="recFps">--</div><div class="stat-label">识别 FPS</div></div><div class="stat"><div class="stat-value" id="camFps">--</div><div class="stat-label">摄像头 FPS</div></div><div class="stat"><div class="stat-value" id="faceCount">0</div><div class="stat-label">检测人脸</div></div><div class="stat"><div class="stat-value" id="knownCount">0</div><div class="stat-label">已识别</div></div></div></div>
+            <div class="card"><h2>🧑 识别结果</h2><div class="face-list" id="faceList"><div class="no-faces">等待识别...</div></div></div>
+            <div class="card"><h2>📝 识别日志</h2><div class="log" id="logPanel"></div></div>
         </div>
     </div>
+</div>
+<script>
+const statusDot = document.getElementById('statusDot');
+const statusText = document.getElementById('statusText');
+const fpsText = document.getElementById('fpsText');
+const recFps = document.getElementById('recFps');
+const camFps = document.getElementById('camFps');
+const faceCount = document.getElementById('faceCount');
+const knownCount = document.getElementById('knownCount');
+const faceList = document.getElementById('faceList');
+const logPanel = document.getElementById('logPanel');
+const servoText = document.getElementById('servoText');
+let lastSeenNames = new Set(); const MAX_LOG = 50;
 
-    <script>
-        const statusDot = document.getElementById('statusDot');
-        const statusText = document.getElementById('statusText');
-        const fpsText = document.getElementById('fpsText');
-        const recFps = document.getElementById('recFps');
-        const camFps = document.getElementById('camFps');
-        const faceCount = document.getElementById('faceCount');
-        const knownCount = document.getElementById('knownCount');
-        const faceList = document.getElementById('faceList');
-        const logPanel = document.getElementById('logPanel');
+const canvas = document.getElementById('eyesCanvas');
+const ctx = canvas.getContext('2d');
+let dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+let targetX = 0, targetY = 0, lookX = 0, lookY = 0, blink = 0;
+let nextBlink = performance.now() + 1800 + Math.random() * 1800;
+function resizeEyes(){const r=canvas.getBoundingClientRect();canvas.width=Math.max(10,Math.floor(r.width*dpr));canvas.height=Math.max(10,Math.floor(r.height*dpr));}
+function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+function setServoDirection(pan=0,tilt=0){targetX=clamp(pan/180,-1,1);targetY=clamp(-(tilt-30)/60,-1,1);} 
+function drawEyes(ts){const w=canvas.width,h=canvas.height;lookX+=(targetX-lookX)*.12;lookY+=(targetY-lookY)*.12;if(ts>nextBlink){blink=1;nextBlink=ts+1900+Math.random()*2200;}blink+=(0-blink)*.18;ctx.clearRect(0,0,w,h);const cxL=w*.37,cxR=w*.63,cy=h*.52,eyeW=Math.min(w*.18,150*dpr),eyeH=Math.min(h*.42,72*dpr),irisR=Math.min(eyeW,eyeH)*.23,px=lookX*eyeW*.22,py=lookY*eyeH*.2,open=1-blink*.92;function eye(cx){ctx.save();ctx.beginPath();ctx.ellipse(cx,cy,eyeW,eyeH*open,0,0,Math.PI*2);ctx.fillStyle='#06111f';ctx.fill();ctx.strokeStyle='#1d4ed8';ctx.lineWidth=2*dpr;ctx.stroke();ctx.clip();const gx=cx+px,gy=cy+py;const g=ctx.createRadialGradient(gx-irisR*.2,gy-irisR*.2,irisR*.2,gx,gy,irisR*1.8);g.addColorStop(0,'#7dd3fc');g.addColorStop(.5,'#3b82f6');g.addColorStop(1,'#0b1020');ctx.beginPath();ctx.arc(gx,gy,irisR*1.6,0,Math.PI*2);ctx.fillStyle=g;ctx.fill();ctx.beginPath();ctx.arc(gx,gy,irisR*.55,0,Math.PI*2);ctx.fillStyle='#020617';ctx.fill();ctx.beginPath();ctx.arc(gx-irisR*.2,gy-irisR*.2,irisR*.18,0,Math.PI*2);ctx.fillStyle='#e0f2fe';ctx.fill();ctx.restore();}eye(cxL);eye(cxR);requestAnimationFrame(drawEyes);} 
+window.setServoDirection=setServoDirection; window.addEventListener('resize',resizeEyes); resizeEyes(); requestAnimationFrame(drawEyes);
 
-        let lastSeenNames = new Set();
-        const MAX_LOG = 50;
+function addLog(name,confidence){const now=new Date().toLocaleTimeString('zh-CN');const entry=document.createElement('div');entry.className='log-entry';entry.innerHTML=`<span class="time">${now}</span> <span class="name">${name}</span> (${(confidence*100).toFixed(0)}%)`;logPanel.prepend(entry);while(logPanel.children.length>MAX_LOG){logPanel.removeChild(logPanel.lastChild);}}
 
-        function addLog(name, confidence) {
-            const now = new Date().toLocaleTimeString('zh-CN');
-            const entry = document.createElement('div');
-            entry.className = 'log-entry';
-            entry.innerHTML = `<span class="time">${now}</span> <span class="name">${name}</span> (${(confidence * 100).toFixed(0)}%)`;
-            logPanel.prepend(entry);
-            while (logPanel.children.length > MAX_LOG) {
-                logPanel.removeChild(logPanel.lastChild);
-            }
-        }
-
-        async function pollStatus() {
-            try {
-                const resp = await fetch('/api/status');
-                const data = await resp.json();
-
-                statusDot.className = 'dot online';
-                statusText.textContent = '在线';
-
-                recFps.textContent = data.recognition_fps || '--';
-                camFps.textContent = data.camera_fps || '--';
-                fpsText.textContent = `识别 ${data.recognition_fps || 0} FPS | 摄像头 ${data.camera_fps || 0} FPS`;
-
-                const faces = data.faces || [];
-                faceCount.textContent = faces.length;
-                const known = faces.filter(f => f.name !== 'unknown');
-                knownCount.textContent = known.length;
-
-                if (faces.length === 0) {
-                    faceList.innerHTML = '<div class="no-faces">未检测到人脸</div>';
-                } else {
-                    faceList.innerHTML = faces.map(f => {
-                        const isUnknown = f.name === 'unknown';
-                        const cls = isUnknown ? 'face-item unknown' : 'face-item';
-                        const age = f.age ? `${f.age}岁` : '';
-                        const gender = f.gender === 'M' ? '男' : f.gender === 'F' ? '女' : '';
-                        const meta = [age, gender].filter(Boolean).join(' · ');
-                        return `
-                            <div class="${cls}">
-                                <div>
-                                    <div class="face-name">${f.name}</div>
-                                    ${meta ? `<div class="face-meta">${meta}</div>` : ''}
-                                </div>
-                                <div class="face-conf">${(f.confidence * 100).toFixed(1)}%</div>
-                            </div>
-                        `;
-                    }).join('');
-                }
-
-                // 新出现的人记录日志
-                const currentNames = new Set(known.map(f => f.name));
-                for (const f of known) {
-                    if (!lastSeenNames.has(f.name)) {
-                        addLog(f.name, f.confidence);
-                    }
-                }
-                lastSeenNames = currentNames;
-
-            } catch (e) {
-                statusDot.className = 'dot offline';
-                statusText.textContent = '离线';
-            }
-        }
-
-        // 每秒刷新状态
-        setInterval(pollStatus, 1000);
-        pollStatus();
-
-        // 视频流断线重连
-        const videoStream = document.getElementById('videoStream');
-        videoStream.onerror = () => {
-            setTimeout(() => {
-                videoStream.src = '/video_feed?' + Date.now();
-            }, 2000);
-        };
-    </script>
-</body>
-</html>
+async function pollStatus(){
+  try{
+    const resp=await fetch('/api/status'); const data=await resp.json();
+    statusDot.className='dot online'; statusText.textContent='在线';
+    recFps.textContent=data.recognition_fps||'--'; camFps.textContent=data.camera_fps||'--';
+    fpsText.textContent=`识别 ${data.recognition_fps||0} FPS | 摄像头 ${data.camera_fps||0} FPS`;
+    const pan=(typeof data.pan==='number')?data.pan:((typeof data.pan_angle==='number')?data.pan_angle:null);
+    const tilt=(typeof data.tilt==='number')?data.tilt:((typeof data.tilt_angle==='number')?data.tilt_angle:null);
+    if(pan!==null && tilt!==null){servoText.innerHTML=`pan: ${pan.toFixed(1)}°<br>tilt: ${tilt.toFixed(1)}°`;setServoDirection(pan,tilt);} else {servoText.innerHTML='pan: --°<br>tilt: --°';}
+    const faces=data.faces||[]; faceCount.textContent=faces.length; const known=faces.filter(f=>f.name!=='unknown'); knownCount.textContent=known.length;
+    if(faces.length===0){faceList.innerHTML='<div class="no-faces">未检测到人脸</div>';} else {faceList.innerHTML=faces.map(f=>{const isUnknown=f.name==='unknown';const cls=isUnknown?'face-item unknown':'face-item';const age=f.age?`${f.age}岁`:'';const gender=f.gender==='M'?'男':f.gender==='F'?'女':'';const meta=[age,gender].filter(Boolean).join(' · ');return `<div class="${cls}"><div><div class="face-name">${f.name}</div>${meta?`<div class="face-meta">${meta}</div>`:''}</div><div class="face-conf">${(f.confidence*100).toFixed(1)}%</div></div>`;}).join('');}
+    const currentNames=new Set(known.map(f=>f.name)); for(const f of known){if(!lastSeenNames.has(f.name))addLog(f.name,f.confidence);} lastSeenNames=currentNames;
+  }catch(e){statusDot.className='dot offline'; statusText.textContent='离线';}
+}
+setInterval(pollStatus,1000); pollStatus();
+const videoStream=document.getElementById('videoStream'); videoStream.onerror=()=>{setTimeout(()=>{videoStream.src='/video_feed?'+Date.now();},2000);};
+</script>
+</body></html>

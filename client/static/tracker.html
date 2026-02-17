@@ -13,6 +13,18 @@
             min-height: 100vh;
         }
         .container { max-width: 1200px; margin: 0 auto; padding: 16px; }
+        .eye-bar {
+            width: 100%; height: 140px; margin-bottom: 12px; border-radius: 12px;
+            background: radial-gradient(120% 140% at 50% 0%, #111 0%, #020202 60%, #000 100%);
+            border: 1px solid #1f2937; overflow: hidden; position: relative;
+        }
+        #eyesCanvas { width: 100%; height: 100%; display: block; }
+        .servo-overlay {
+            position: absolute; right: 10px; top: 10px;
+            background: rgba(0,0,0,.62); border: 1px solid rgba(59,130,246,.35);
+            color: #93c5fd; border-radius: 8px; padding: 6px 9px;
+            font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        }
         header {
             display: flex; justify-content: space-between; align-items: center;
             padding: 12px 0; border-bottom: 1px solid #333; margin-bottom: 16px;
@@ -83,6 +95,10 @@
 </head>
 <body>
     <div class="container">
+        <div class="eye-bar">
+            <canvas id="eyesCanvas"></canvas>
+            <div class="servo-overlay" id="servoText">pan: --°<br>tilt: --°</div>
+        </div>
         <header>
             <h1>🎯 人脸跟踪</h1>
             <div class="priority-list">
@@ -115,6 +131,7 @@
                         </div>
                     </div>
                     <button class="btn" onclick="gimbalCenter()">🏠 回中</button>
+                    <button class="btn" onclick="gimbalCalibrate()" style="background:#1e3a5f">🔧 校准（当前=0°）</button>
                 </div>
                 <div class="card">
                     <h2>🔊 音量</h2>
@@ -148,6 +165,49 @@
         const panAngle = document.getElementById('panAngle');
         const tiltAngle = document.getElementById('tiltAngle');
         const faceList = document.getElementById('faceList');
+        const servoText = document.getElementById('servoText');
+
+        // ===== Robot Eyes =====
+        const canvas = document.getElementById('eyesCanvas');
+        const ctx = canvas.getContext('2d');
+        const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+        let targetX = 0, targetY = 0, lookX = 0, lookY = 0, blink = 0;
+        let nextBlink = performance.now() + 1600 + Math.random() * 1800;
+        function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+        function resizeEyes(){ const r=canvas.getBoundingClientRect(); canvas.width=Math.max(10,Math.floor(r.width*dpr)); canvas.height=Math.max(10,Math.floor(r.height*dpr)); }
+        function setServoDirection(pan=0, tilt=0){
+            targetX = clamp((+pan || 0) / 60, -1, 1);
+            targetY = clamp(-((+tilt || 0)) / 40, -1, 1);
+        }
+        function drawEyes(ts){
+            const w=canvas.width,h=canvas.height;
+            lookX += (targetX-lookX)*0.15; lookY += (targetY-lookY)*0.15;
+            if(ts>nextBlink){ blink=1; nextBlink = ts + 1800 + Math.random()*2200; }
+            blink += (0-blink)*0.2;
+            ctx.clearRect(0,0,w,h);
+            const cxL=w*0.35,cxR=w*0.65,cy=h*0.5;
+            const eyeR=Math.min(w*0.1, h*0.38, 52*dpr);
+            const px=lookX*eyeR*1.6, py=lookY*eyeR*1.2;
+            const open=1-blink*0.95;
+            function drawEye(cx){
+                ctx.save();
+                // clip for blink
+                ctx.beginPath(); ctx.ellipse(cx,cy,eyeR*1.05,eyeR*open,0,0,Math.PI*2); ctx.clip();
+                // solid cute blue ball
+                const gx=cx+px, gy=cy+py;
+                const g=ctx.createRadialGradient(gx-eyeR*0.25,gy-eyeR*0.25,eyeR*0.05,gx,gy,eyeR);
+                g.addColorStop(0,'#93c5fd'); g.addColorStop(0.45,'#3b82f6'); g.addColorStop(1,'#1d4ed8');
+                ctx.beginPath(); ctx.arc(gx,gy,eyeR,0,Math.PI*2); ctx.fillStyle=g; ctx.fill();
+                // highlight
+                ctx.beginPath(); ctx.arc(gx-eyeR*0.22,gy-eyeR*0.22,eyeR*0.18,0,Math.PI*2);
+                ctx.fillStyle='rgba(255,255,255,0.55)'; ctx.fill();
+                ctx.restore();
+            }
+            drawEye(cxL); drawEye(cxR); requestAnimationFrame(drawEyes);
+        }
+        window.setServoDirection = setServoDirection;
+        window.addEventListener('resize', resizeEyes);
+        resizeEyes(); requestAnimationFrame(drawEyes);
 
         async function pollStatus() {
             try {
@@ -177,8 +237,12 @@
                     gestureEl.innerHTML = '未检测到手';
                     gestureEl.style.color = '#555';
                 }
-                panAngle.textContent = `${d.pan || 0}°`;
-                tiltAngle.textContent = `${d.tilt || 0}°`;
+                const pan = (typeof d.pan === 'number') ? d.pan : ((typeof d.pan_angle === 'number') ? d.pan_angle : 0);
+                const tilt = (typeof d.tilt === 'number') ? d.tilt : ((typeof d.tilt_angle === 'number') ? d.tilt_angle : 0);
+                panAngle.textContent = `${pan}°`;
+                tiltAngle.textContent = `${tilt}°`;
+                servoText.innerHTML = `pan: ${Number(pan).toFixed(1)}°<br>tilt: ${Number(tilt).toFixed(1)}°`;
+                setServoDirection(pan, tilt);
                 const faces = d.faces || [];
                 if (faces.length === 0) {
                     faceList.innerHTML = '<div style="color:#555;text-align:center;padding:16px">未检测到人脸</div>';
@@ -196,6 +260,9 @@
         }
         async function gimbalCenter() {
             await fetch('/api/gimbal/center', {method:'POST'});
+        }
+        async function gimbalCalibrate() {
+            await fetch('/api/gimbal/calibrate', {method:'POST'});
         }
         const logPanel = document.getElementById('logPanel');
         async function pollLogs() {
