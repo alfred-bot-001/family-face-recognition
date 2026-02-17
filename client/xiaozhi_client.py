@@ -484,49 +484,56 @@ async def main(ws_url: str):
     device_id = "pi-laosan-001"
     log.info(f"设备ID: {device_id}")
 
-    client = XiaozhiClient(ws_url, device_id)
+    while True:
+        client = XiaozhiClient(ws_url, device_id)
 
-    # 连接
-    if not await client.connect():
-        log.error("连接失败，退出")
-        return
+        # 连接
+        if not await client.connect():
+            log.error("连接失败，3秒后重试")
+            await asyncio.sleep(3)
+            continue
 
-    # 用服务端TTS播报上线
-    await client.announce_online()
-    # 等播报结束再开唤醒监听，避免把播报内容识别成用户语音
-    await asyncio.sleep(0.5)
-    while client.is_speaking:
-        await asyncio.sleep(0.2)
+        # 用服务端TTS播报上线
+        await client.announce_online()
+        # 等播报结束再开唤醒监听，避免把播报内容识别成用户语音
+        await asyncio.sleep(0.5)
+        while client.is_speaking:
+            await asyncio.sleep(0.2)
 
-    # 唤醒词监听
-    listener = WakeWordListener(should_pause_fn=lambda: client.is_speaking or client.is_listening)
-    loop = asyncio.get_event_loop()
+        # 唤醒词监听
+        listener = WakeWordListener(should_pause_fn=lambda: client.is_speaking or client.is_listening)
+        loop = asyncio.get_event_loop()
 
-    def on_wake():
-        listener.pause()
-        asyncio.run_coroutine_threadsafe(client.on_wake_word(), loop)
+        def on_wake():
+            listener.pause()
+            asyncio.run_coroutine_threadsafe(client.on_wake_word(), loop)
 
-        def wait_and_resume():
-            # 防卡死：最多等待25秒，超时也强制恢复监听
-            start_ts = time.time()
-            time.sleep(2)
-            while True:
-                if not client.is_listening and not client.is_speaking:
-                    break
-                if time.time() - start_ts > 120:
-                    log.warning("恢复监听等待超时(120s)，强制恢复")
-                    break
-                time.sleep(0.5)
-            time.sleep(0.8)
-            listener.resume()
-            log.info(f"👂 继续监听: {WAKE_WORD}")
+            def wait_and_resume():
+                # 防卡死：最长等待120秒
+                start_ts = time.time()
+                time.sleep(2)
+                while True:
+                    if not client.is_listening and not client.is_speaking:
+                        break
+                    if time.time() - start_ts > 120:
+                        log.warning("恢复监听等待超时(120s)，强制恢复")
+                        break
+                    time.sleep(0.5)
+                time.sleep(0.8)
+                listener.resume()
+                log.info(f"👂 继续监听: {WAKE_WORD}")
 
-        threading.Thread(target=wait_and_resume, daemon=True).start()
+            threading.Thread(target=wait_and_resume, daemon=True).start()
 
-    listener.start(on_wake)
+        listener.start(on_wake)
 
-    # 消息循环（保持长连接）
-    await client.message_loop()
+        # 消息循环（保持长连接）
+        await client.message_loop()
+
+        # 断线后清理并自动重连
+        listener.stop()
+        log.warning("连接已断开，3秒后自动重连")
+        await asyncio.sleep(3)
 
 
 if __name__ == "__main__":
