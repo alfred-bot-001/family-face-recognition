@@ -151,7 +151,7 @@
 
         async function pollStatus() {
             try {
-                const r = await fetch('/api/status');
+                const r = await fetch('/api/status?t=' + Date.now(), {cache:'no-store'});
                 const d = await r.json();
                 if (d.tracking) {
                     trackingTarget.className = 'tracking-target active';
@@ -169,9 +169,10 @@
                     gestureEl.innerHTML = '<span style="font-size:1.5rem">👋</span> 挥手检测到！';
                     gestureEl.style.color = '#ffeb3b';
                 } else if (gs.hands_count > 0) {
-                    const palm = (gs.hand_landmarks||[]).some(h=>h.palm_open) ? '🖐️ 手掌张开' : '✊ 握拳';
-                    gestureEl.innerHTML = `${palm} (${gs.hands_count}只手)`;
-                    gestureEl.style.color = '#4caf50';
+                    const g = gs.gesture || 'unknown';
+                    const text = g === 'open_palm' ? '🖐️ 手掌张开' : (g === 'fist' ? '✊ 握拳' : `✋ ${g}`);
+                    gestureEl.innerHTML = `${text} (${gs.hands_count}只手)`;
+                    gestureEl.style.color = (g === 'open_palm') ? '#00e676' : '#4caf50';
                 } else {
                     gestureEl.innerHTML = '未检测到手';
                     gestureEl.style.color = '#555';
@@ -199,7 +200,7 @@
         const logPanel = document.getElementById('logPanel');
         async function pollLogs() {
             try {
-                const r = await fetch('/api/logs');
+                const r = await fetch('/api/logs?t=' + Date.now(), {cache:'no-store'});
                 const logs = await r.json();
                 logPanel.innerHTML = logs.map(l =>
                     `<div class="log-entry"><span class="log-time">${l.time}</span> <span class="log-level-${l.level}">[${l.level}]</span> <span class="log-msg">${l.msg}</span></div>`
@@ -227,7 +228,7 @@
         const xiaozhiPanel = document.getElementById('xiaozhiPanel');
         async function pollXiaozhi() {
             try {
-                const r = await fetch('/api/xiaozhi/logs');
+                const r = await fetch('/api/xiaozhi/logs?t=' + Date.now(), {cache:'no-store'});
                 const d = await r.json();
                 const shown = d.lines
                     .filter(l => (l.includes('[INFO]') || l.includes('[ERROR]')) && !l.includes('[debug] audio chunks'));
