@@ -31,17 +31,19 @@ FRAME_DURATION_MS = 60
 FRAME_SIZE = SAMPLE_RATE * FRAME_DURATION_MS // 1000  # 960
 AUDIO_PLAY = "plughw:3,0"
 AUDIO_REC = "plughw:2,0"
-WAKE_WORD = "多多多多"
+WAKE_WORD = "多多"
 SHERPA_ASR_DIR = os.path.join(os.path.dirname(__file__), "models", "sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16", "96")
 
 def _contains_wake(text):
-    """唤醒词匹配：多多多多（重复词，容错匹配）"""
+    """唤醒词匹配：多多（容错）"""
     t = "".join(ch for ch in text if not ch.isspace())
-    if "多多多多" in t:
+    if "多多" in t:
         return True
-    # 容错：至少出现3个“多”或“哆”
-    cnt = sum(1 for ch in t if ch in ("多", "哆"))
-    return cnt >= 3
+    # 容错：多/哆 连续两次
+    for i in range(len(t) - 1):
+        if t[i] in ("多", "哆") and t[i + 1] in ("多", "哆"):
+            return True
+    return False
 
 # ============================================================
 #  Opus
@@ -382,9 +384,12 @@ class XiaozhiClient:
                     pass
                 self._play_proc = None
 
-        # 关键修复：不再发送 detect(text=唤醒词)
-        # 某些服务端配置会把 detect.text 当用户问题，导致还没说指令就开始回答。
-        await asyncio.sleep(0.6)
+        # 本地应答：收到唤醒词后先说“我在”
+        speak_async("我在")
+
+        # 关键修复：不发送 detect(text=唤醒词)，避免服务端把唤醒词当问题
+        # 等本地“我在”播完再开始收指令
+        await asyncio.sleep(0.9)
 
         start = {
             "session_id": self.session_id,
