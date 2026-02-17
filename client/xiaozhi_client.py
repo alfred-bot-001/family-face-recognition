@@ -31,18 +31,17 @@ FRAME_DURATION_MS = 60
 FRAME_SIZE = SAMPLE_RATE * FRAME_DURATION_MS // 1000  # 960
 AUDIO_PLAY = "plughw:3,0"
 AUDIO_REC = "plughw:2,0"
-WAKE_WORD = "小机器人"
+WAKE_WORD = "多多多多"
 SHERPA_ASR_DIR = os.path.join(os.path.dirname(__file__), "models", "sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16", "96")
 
 def _contains_wake(text):
-    """唤醒词匹配：小机器人（含常见误识别容错）"""
+    """唤醒词匹配：多多多多（重复词，容错匹配）"""
     t = "".join(ch for ch in text if not ch.isspace())
-    if "小机器人" in t:
+    if "多多多多" in t:
         return True
-    # 容错：小机/小鸡 + 人/仁 + 机/器/七 + 人
-    if ("小机" in t or "小鸡" in t) and ("人" in t or "仁" in t) and ("器人" in t or "七人" in t or "机人" in t):
-        return True
-    return False
+    # 容错：至少出现3个“多”或“哆”
+    cnt = sum(1 for ch in t if ch in ("多", "哆"))
+    return cnt >= 3
 
 # ============================================================
 #  Opus
