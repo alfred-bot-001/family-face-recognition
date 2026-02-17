@@ -14,9 +14,8 @@
         }
         .container { max-width: 1200px; margin: 0 auto; padding: 16px; }
         .eye-bar {
-            width: 100%; height: 140px; margin-bottom: 12px; border-radius: 12px;
-            background: radial-gradient(120% 140% at 50% 0%, #111 0%, #020202 60%, #000 100%);
-            border: 1px solid #1f2937; overflow: hidden; position: relative;
+            width: 100%; height: 180px; margin-bottom: 12px; border-radius: 16px;
+            background: #000; overflow: hidden; position: relative;
         }
         #eyesCanvas { width: 100%; height: 100%; display: block; }
         .servo-overlay {
@@ -167,45 +166,131 @@
         const faceList = document.getElementById('faceList');
         const servoText = document.getElementById('servoText');
 
-        // ===== Robot Eyes =====
+        // ===== LOOI-style Robot Eyes =====
         const canvas = document.getElementById('eyesCanvas');
         const ctx = canvas.getContext('2d');
         const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-        let targetX = 0, targetY = 0, lookX = 0, lookY = 0, blink = 0;
-        let nextBlink = performance.now() + 1600 + Math.random() * 1800;
+        let targetX = 0, targetY = 0, lookX = 0, lookY = 0;
+        let blinkL = 0, blinkR = 0;
+        let nextBlink = performance.now() + 2000 + Math.random() * 2000;
+        // Emotion state: normal, happy, sad, surprised, sleepy, angry, confused, love
+        let emotion = 'normal', emotionT = 0;
+        // Smooth emotion params (current/target)
+        let eSquint = 0, tSquint = 0;    // >0 = happy squint (bottom eyelid up)
+        let eWide = 0, tWide = 0;        // >0 = surprised wide
+        let eDroop = 0, tDroop = 0;      // >0 = sleepy droop (top eyelid down)
+        let eBrowAnger = 0, tBrowAnger = 0; // >0 = angry brow
+
         function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
         function resizeEyes(){ const r=canvas.getBoundingClientRect(); canvas.width=Math.max(10,Math.floor(r.width*dpr)); canvas.height=Math.max(10,Math.floor(r.height*dpr)); }
+
         function setServoDirection(pan=0, tilt=0){
             targetX = clamp((+pan || 0) / 60, -1, 1);
             targetY = clamp(-((+tilt || 0)) / 40, -1, 1);
         }
-        function drawEyes(ts){
-            const w=canvas.width,h=canvas.height;
-            lookX += (targetX-lookX)*0.15; lookY += (targetY-lookY)*0.15;
-            if(ts>nextBlink){ blink=1; nextBlink = ts + 1800 + Math.random()*2200; }
-            blink += (0-blink)*0.2;
-            ctx.clearRect(0,0,w,h);
-            const cxL=w*0.35,cxR=w*0.65,cy=h*0.5;
-            const eyeR=Math.min(w*0.1, h*0.38, 52*dpr);
-            const px=lookX*eyeR*1.6, py=lookY*eyeR*1.2;
-            const open=1-blink*0.95;
-            function drawEye(cx){
-                ctx.save();
-                // clip for blink
-                ctx.beginPath(); ctx.ellipse(cx,cy,eyeR*1.05,eyeR*open,0,0,Math.PI*2); ctx.clip();
-                // solid cute blue ball
-                const gx=cx+px, gy=cy+py;
-                const g=ctx.createRadialGradient(gx-eyeR*0.25,gy-eyeR*0.25,eyeR*0.05,gx,gy,eyeR);
-                g.addColorStop(0,'#93c5fd'); g.addColorStop(0.45,'#3b82f6'); g.addColorStop(1,'#1d4ed8');
-                ctx.beginPath(); ctx.arc(gx,gy,eyeR,0,Math.PI*2); ctx.fillStyle=g; ctx.fill();
-                // highlight
-                ctx.beginPath(); ctx.arc(gx-eyeR*0.22,gy-eyeR*0.22,eyeR*0.18,0,Math.PI*2);
-                ctx.fillStyle='rgba(255,255,255,0.55)'; ctx.fill();
-                ctx.restore();
+
+        function setEmotion(name, durationMs){
+            emotion = name; emotionT = performance.now() + (durationMs || 3000);
+            switch(name){
+                case 'happy':    tSquint=1; tWide=0; tDroop=0; tBrowAnger=0; break;
+                case 'sad':      tSquint=0; tWide=0; tDroop=0.5; tBrowAnger=0; break;
+                case 'surprised':tSquint=0; tWide=1; tDroop=0; tBrowAnger=0; break;
+                case 'sleepy':   tSquint=0; tWide=0; tDroop=0.8; tBrowAnger=0; break;
+                case 'angry':    tSquint=0.3; tWide=0; tDroop=0; tBrowAnger=1; break;
+                case 'love':     tSquint=0.6; tWide=0; tDroop=0; tBrowAnger=0; break;
+                case 'confused': tSquint=0; tWide=0.4; tDroop=0; tBrowAnger=0; break;
+                default:         tSquint=0; tWide=0; tDroop=0; tBrowAnger=0;
             }
-            drawEye(cxL); drawEye(cxR); requestAnimationFrame(drawEyes);
         }
+
+        function drawEyes(ts){
+            const w = canvas.width, h = canvas.height;
+            // Smooth look
+            lookX += (targetX - lookX) * 0.12;
+            lookY += (targetY - lookY) * 0.12;
+            // Auto-blink
+            if(ts > nextBlink){ blinkL = blinkR = 1; nextBlink = ts + 2200 + Math.random() * 2500; }
+            blinkL += (0 - blinkL) * 0.18;
+            blinkR += (0 - blinkR) * 0.18;
+            // Emotion auto-reset
+            if(emotion !== 'normal' && ts > emotionT){ setEmotion('normal'); }
+            // Smooth emotion params
+            const S = 0.08;
+            eSquint += (tSquint - eSquint) * S;
+            eWide += (tWide - eWide) * S;
+            eDroop += (tDroop - eDroop) * S;
+            eBrowAnger += (tBrowAnger - eBrowAnger) * S;
+
+            ctx.clearRect(0, 0, w, h);
+            const gap = w * 0.13; // gap between eyes
+            const cxL = w * 0.5 - gap, cxR = w * 0.5 + gap;
+            const cy = h * 0.52;
+            const R = Math.min(w * 0.14, h * 0.42, 80 * dpr); // big eye radius
+            const pupilR = R * 0.38;
+            const px = lookX * R * 0.55, py = lookY * R * 0.4;
+
+            function drawEye(cx, blinkVal, isLeft){
+                ctx.save();
+                const openTop = Math.max(0.05, 1 - blinkVal * 0.95 - eDroop * 0.45 - eBrowAnger * 0.2);
+                const openBot = Math.max(0.05, 1 - blinkVal * 0.95 - eSquint * 0.4);
+                const scaleY = (1 + eWide * 0.12);
+                const ex = cx + px, ey = cy + py;
+
+                // LOOI style: solid color cartoon eye, no pupil, no white
+                ctx.beginPath();
+                ctx.ellipse(ex, ey, R, R * openTop * scaleY, 0, Math.PI, 0);
+                ctx.ellipse(ex, ey, R, R * openBot * scaleY, 0, 0, Math.PI);
+                ctx.closePath();
+                // Soft radial gradient for depth
+                const g = ctx.createRadialGradient(ex - R*0.2, ey - R*0.2, R*0.05, ex, ey, R);
+                g.addColorStop(0, '#93c5fd');
+                g.addColorStop(0.5, '#3b82f6');
+                g.addColorStop(1, '#1d4ed8');
+                ctx.fillStyle = g;
+                ctx.fill();
+
+                // Big highlight (top-left)
+                ctx.beginPath(); ctx.arc(ex - R*0.22, ey - R*0.22, R*0.17, 0, Math.PI*2);
+                ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.fill();
+                // Small highlight (bottom-right)
+                ctx.beginPath(); ctx.arc(ex + R*0.15, ey + R*0.18, R*0.07, 0, Math.PI*2);
+                ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.fill();
+
+                // Angry brow
+                if(eBrowAnger > 0.05){
+                    ctx.globalAlpha = eBrowAnger;
+                    ctx.strokeStyle = '#64748b'; ctx.lineWidth = R * 0.1; ctx.lineCap = 'round';
+                    const by = ey - R * openTop * scaleY - R * 0.15;
+                    const angle = isLeft ? 0.35 : -0.35;
+                    ctx.beginPath();
+                    ctx.moveTo(cx - R*0.7, by + Math.sin(angle)*R*0.35);
+                    ctx.lineTo(cx + R*0.7, by - Math.sin(angle)*R*0.35);
+                    ctx.stroke();
+                    ctx.globalAlpha = 1;
+                }
+                ctx.restore();
+
+                // Love hearts
+                if(emotion === 'love' && eSquint > 0.3){
+                    ctx.save(); ctx.globalAlpha = eSquint * 0.7;
+                    ctx.fillStyle = '#f472b6';
+                    ctx.font = `${R*0.4}px serif`;
+                    ctx.fillText('♥', cx + R*0.8, cy - R*0.6);
+                    ctx.restore();
+                }
+            }
+
+            drawEye(cxL, blinkL, true);
+            drawEye(cxR, blinkR, false);
+
+            // Confused: one eye slightly higher
+            // (handled naturally by slight tilt)
+
+            requestAnimationFrame(drawEyes);
+        }
+
         window.setServoDirection = setServoDirection;
+        window.setEmotion = setEmotion;
         window.addEventListener('resize', resizeEyes);
         resizeEyes(); requestAnimationFrame(drawEyes);
 
@@ -243,7 +328,15 @@
                 tiltAngle.textContent = `${tilt}°`;
                 servoText.innerHTML = `pan: ${Number(pan).toFixed(1)}°<br>tilt: ${Number(tilt).toFixed(1)}°`;
                 setServoDirection(pan, tilt);
+                // Emotion triggers
                 const faces = d.faces || [];
+                const known = faces.filter(f => f.name !== 'unknown');
+                if (faces.length === 0 && emotion === 'normal') { setEmotion('sleepy', 2000); }
+                else if (known.length > 0 && emotion === 'normal') { setEmotion('happy', 1500); }
+                const gs2 = d.gesture || {};
+                if (gs2.wave_detected) { setEmotion('surprised', 2000); }
+                else if (gs2.gesture === 'open_palm' && emotion === 'normal') { setEmotion('love', 2500); }
+
                 if (faces.length === 0) {
                     faceList.innerHTML = '<div style="color:#555;text-align:center;padding:16px">未检测到人脸</div>';
                 } else {

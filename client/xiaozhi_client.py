@@ -343,6 +343,17 @@ class XiaozhiClient:
                 log.info(f"💬 {msg.get('text', '')}")
             elif state == "stop":
                 self.is_speaking = False
+                # 关闭 aplay 释放音频设备
+                if self._play_proc:
+                    try:
+                        self._play_proc.stdin.close()
+                    except Exception:
+                        pass
+                    try:
+                        self._play_proc.wait(timeout=2)
+                    except Exception:
+                        self._play_proc.kill()
+                    self._play_proc = None
                 log.info("🔊 服务端说话结束")
         elif t == "stt":
             log.info(f"🎤 识别: {msg.get('text', '')}")
