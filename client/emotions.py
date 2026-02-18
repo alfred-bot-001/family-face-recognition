@@ -69,8 +69,8 @@ def _happy(gimbal):
         gimbal.move_to(base_pan + dx, base_tilt + 5, speed=15, acc=4)
         time.sleep(0.12)
     # 轮子小扭
-    _drive(gimbal, 80, -80, 0.15)
-    _drive(gimbal, -80, 80, 0.15)
+    _drive(gimbal, 0.5, -0.5, 0.2)
+    _drive(gimbal, -0.5, 0.5, 0.2)
     # 归位
     gimbal.move_to(base_pan, base_tilt, speed=10, acc=2)
 
@@ -87,8 +87,8 @@ def _excited(gimbal):
         gimbal.move_to(base_pan, base_tilt + dy, speed=12, acc=3)
         time.sleep(0.15)
     # 前冲再退
-    _drive(gimbal, 120, 120, 0.2)
-    _drive(gimbal, -120, -120, 0.2)
+    _drive(gimbal, 0.8, 0.8, 0.25)
+    _drive(gimbal, -0.8, -0.8, 0.25)
     gimbal.move_to(base_pan, base_tilt, speed=10, acc=2)
 
 
@@ -103,8 +103,8 @@ def _angry(gimbal):
     gimbal.move_to(base_pan, base_tilt - 15, speed=15, acc=3)
     time.sleep(0.2)
     # 前冲
-    _drive(gimbal, 150, 150, 0.15)
-    _drive(gimbal, 0, 0, 0.1)
+    _drive(gimbal, 1.0, 1.0, 0.2)
+    _drive(gimbal, 0, 0, 0.05)
     gimbal.move_to(base_pan, base_tilt, speed=10, acc=2)
 
 
@@ -117,7 +117,7 @@ def _shy(gimbal):
     gimbal.move_to(base_pan + 40, base_tilt - 15, speed=3, acc=1)
     time.sleep(0.4)
     # 后退一点
-    _drive(gimbal, -80, -80, 0.2)
+    _drive(gimbal, -0.5, -0.5, 0.25)
     time.sleep(0.3)
     # 慢慢回来
     gimbal.move_to(base_pan, base_tilt, speed=5, acc=1)
@@ -147,7 +147,7 @@ def _curious(gimbal):
     gimbal.move_to(base_pan + 20, base_tilt + 20, speed=5, acc=1)
     time.sleep(0.3)
     # 缓慢前进
-    _drive(gimbal, 60, 60, 0.3)
+    _drive(gimbal, 0.4, 0.4, 0.3)
     time.sleep(0.3)
     gimbal.move_to(base_pan, base_tilt, speed=8, acc=2)
 
@@ -163,8 +163,8 @@ def _greet(gimbal):
         gimbal.move_to(base_pan + dx, base_tilt + 15, speed=12, acc=3)
         time.sleep(0.15)
     # 原地小转
-    _drive(gimbal, 100, -100, 0.2)
-    _drive(gimbal, -100, 100, 0.2)
+    _drive(gimbal, 0.6, -0.6, 0.25)
+    _drive(gimbal, -0.6, 0.6, 0.25)
     gimbal.move_to(base_pan, base_tilt, speed=10, acc=2)
 
 
@@ -179,8 +179,8 @@ def _cute(gimbal):
         gimbal.move_to(base_pan - 15, base_tilt + dy, speed=12, acc=3)
         time.sleep(0.1)
     # 小扭
-    _drive(gimbal, 60, -60, 0.12)
-    _drive(gimbal, -60, 60, 0.12)
+    _drive(gimbal, 0.4, -0.4, 0.15)
+    _drive(gimbal, -0.4, 0.4, 0.15)
     gimbal.move_to(base_pan, base_tilt, speed=8, acc=2)
 
 
@@ -206,7 +206,7 @@ def _surprise(gimbal):
     # 定住
     time.sleep(0.4)
     # 后退
-    _drive(gimbal, -100, -100, 0.2)
+    _drive(gimbal, -0.6, -0.6, 0.25)
     time.sleep(0.2)
     gimbal.move_to(base_pan, base_tilt, speed=10, acc=2)
 
