@@ -615,7 +615,7 @@ class XiaozhiClient:
         if self.gimbal and getattr(self.gimbal, 'connected', False):
             threading.Thread(target=gimbal_online_nod, args=(self.gimbal,), daemon=True).start()
 
-        # 直接开始录音，不用本地 TTS 播报
+        # 直接开始录音（点头已在上方触发）
         start = {
             "session_id": self.session_id,
             "type": "listen", "state": "start", "mode": "auto",
@@ -909,7 +909,7 @@ def gimbal_happy_swing(gimbal, amp=6.0, step_delay=0.18):
             gimbal.move_to(base_pan + dx, base_tilt, speed=12, acc=3)
             time.sleep(step_delay)
 
-def gimbal_online_nod(gimbal, amp=4.0, step_delay=0.2):
+def gimbal_online_nod(gimbal, amp=25.0, step_delay=0.25):
     if not getattr(gimbal, "connected", False):
         return
     with _motion_lock:
