@@ -68,6 +68,7 @@ SHERPA_ASR_DIR = os.path.join(os.path.dirname(__file__), "models",
                               "sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16", "96")
 
 import logging
+from emotions import play_emotion_from_text, play_emotion
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("main")
 
@@ -428,6 +429,7 @@ class XiaozhiClient:
         self.ws = None
         self.connected = False
         self.is_speaking = False
+        self._sleep_requested = False
         self.is_listening = False
         self._rec_proc = None
         self._play_proc = None
@@ -511,6 +513,13 @@ class XiaozhiClient:
             elif state == "sentence_start":
                 text = msg.get('text', '')
                 add_log("INFO", f"💬 {text}")
+                # 情绪动作（检测 LLM 回复文本触发）
+                if self.gimbal and getattr(self.gimbal, 'connected', False):
+                    play_emotion_from_text(self.gimbal, text)
+                # 检测休眠意图（LLM 回复中包含休眠相关词）
+                _sleep_kw = ['休息', '睡觉', '休眠', '关机', '待机', '晚安', '拜拜']
+                if any(kw in text for kw in _sleep_kw):
+                    self._sleep_requested = True
             elif state == "stop":
                 self.is_speaking = False
                 if self._play_proc:
@@ -524,6 +533,13 @@ class XiaozhiClient:
                         self._play_proc.kill()
                     self._play_proc = None
                 add_log("INFO", "🔊 多多说话结束")
+                # 说完话后检查是否要假装休眠
+                if self._sleep_requested:
+                    self._sleep_requested = False
+                    add_log("INFO", "😴 多多假装休眠（低头）")
+                    if self.gimbal and getattr(self.gimbal, 'connected', False):
+                        self.gimbal.move_to(0, -30, speed=5, acc=1)
+                    _camera_wake_event.clear()
         elif t == "stt":
             add_log("INFO", f"🎤 识别: {msg.get('text', '')}")
         elif t == "llm":
@@ -767,6 +783,7 @@ async def _xiaozhi_main(gimbal, ws_url):
         for l in listeners:
             l.stop()
         _xiaozhi_client = None
+
         add_log("WARN", "多多断线，3秒后重连")
         await asyncio.sleep(3)
 
@@ -1127,6 +1144,9 @@ def camera_tracking_loop(api_url, camera_id, width, height, fps_limit, gimbal, g
         # 空闲休眠检查：5分钟无人脸+无交互 → 关闭摄像头
         if not camera_sleeping and (now - last_activity_time > IDLE_CAMERA_TIMEOUT):
             add_log("INFO", "😴 5分钟无活动，关闭摄像头进入休眠")
+            # 舵机低头60°，模拟睡觉
+            if gimbal_instance and getattr(gimbal_instance, 'connected', False):
+                gimbal_instance.move_to(0, -30, speed=5, acc=1)
             close_camera(cam_type, cam_obj)
             cam_type, cam_obj = None, None
             camera_sleeping = True
@@ -1136,6 +1156,9 @@ def camera_tracking_loop(api_url, camera_id, width, height, fps_limit, gimbal, g
             _camera_wake_event.clear()
             _camera_wake_event.wait()  # 阻塞等待唤醒
             add_log("INFO", "📷 摄像头唤醒中...")
+            # 舵机抬头复位
+            if gimbal_instance and getattr(gimbal_instance, 'connected', False):
+                gimbal_instance.center()
             cam_type, cam_obj = open_camera(camera_id, width, height)
             last_retry = time.time()
             continue
