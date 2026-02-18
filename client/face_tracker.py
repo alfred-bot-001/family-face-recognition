@@ -630,6 +630,10 @@ class XiaozhiClient:
         # 云台点头
         if self.gimbal and getattr(self.gimbal, 'connected', False):
             threading.Thread(target=gimbal_online_nod, args=(self.gimbal,), daemon=True).start()
+            # 头灯微亮表示听到
+            from emotions import _light, _light_off, LIGHT_DIM
+            _light(self.gimbal, 0, LIGHT_DIM)
+            threading.Timer(1.0, _light_off, args=(self.gimbal,)).start()
 
         # 直接开始录音（点头已在上方触发）
         start = {
