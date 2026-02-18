@@ -478,9 +478,29 @@ class XiaozhiClient:
             return False
         return True
 
-    async def message_loop(self):
+    async def _keepalive(self):
+        """每60秒发ping保活，防止服务端超时断连"""
         try:
+            while self.connected:
+                await asyncio.sleep(60)
+                if self.connected and self.ws:
+                    try:
+                        await self.ws.send(json.dumps({
+                            "session_id": self.session_id,
+                            "type": "ping"
+                        }))
+                        log.debug("keepalive ping sent")
+                    except Exception:
+                        break
+        except asyncio.CancelledError:
+            pass
+
+    async def message_loop(self):
+        keepalive_task = asyncio.create_task(self._keepalive())
+        try:
+            self._last_active = time.time()
             async for message in self.ws:
+                self._last_active = time.time()
                 if isinstance(message, bytes):
                     if self._mute:
                         continue  # 打断中，丢弃残余音频帧
@@ -499,6 +519,8 @@ class XiaozhiClient:
             log.error(f"多多连接断开: {e}")
             self.connected = False
             add_log("WARN", f"多多断线: {e}")
+        finally:
+            keepalive_task.cancel()
 
     async def _handle(self, msg: dict):
         t = msg.get("type", "")
@@ -516,10 +538,7 @@ class XiaozhiClient:
                 # 情绪动作（检测 LLM 回复文本触发）
                 if self.gimbal and getattr(self.gimbal, 'connected', False):
                     play_emotion_from_text(self.gimbal, text)
-                # 检测休眠意图（LLM 回复中包含休眠相关词）
-                _sleep_kw = ['休息', '睡觉', '休眠', '关机', '待机', '晚安', '拜拜']
-                if any(kw in text for kw in _sleep_kw):
-                    self._sleep_requested = True
+                # 休眠检测已移到 STT（用户说的话触发，不检测 LLM 回复）
             elif state == "stop":
                 self.is_speaking = False
                 if self._play_proc:
@@ -541,7 +560,12 @@ class XiaozhiClient:
                         self.gimbal.move_to(0, -30, speed=5, acc=1)
                     _camera_wake_event.clear()
         elif t == "stt":
-            add_log("INFO", f"🎤 识别: {msg.get('text', '')}")
+            stt_text = msg.get('text', '')
+            add_log("INFO", f"🎤 识别: {stt_text}")
+            # 用户说了休息相关的话才触发休眠
+            _sleep_kw = ['你休息', '去休息', '去睡', '你睡', '关机', '待机', '休眠']
+            if any(kw in stt_text for kw in _sleep_kw):
+                self._sleep_requested = True
         elif t == "llm":
             add_log("INFO", f"🤖 {msg.get('text', '')}")
         elif t == "hello":
