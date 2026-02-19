@@ -68,7 +68,7 @@ XIAOZHI_DEVICE_ID = "pi-laosan-001"
 # 视觉识别 (智控台 VLLM API)
 VISION_API_URL = "http://192.168.0.69:8103/mcp/vision/explain"
 VISION_AUTH_SECRET = "f9e18e72-09ad-4cdf-9a34-62ee2ff2adfc"
-_VISION_KEYWORDS = ['看看', '看一下', '你看', '看到了什么', '看到什么', '前面有什么', '周围有什么', '眼前', '看一看']
+_VISION_KEYWORDS = ['看看', '看一下', '你看', '看到了什么', '看到什么', '前面有什么', '周围有什么', '眼前', '看一看', '看我', '手里拿', '拿的什么', '这是什么', '那是什么', '什么东西']
 
 # 拍照功能
 _PHOTO_KEYWORDS = ['拍照', '拍个照', '拍张照', '照相', '拍一张', '来一张', '茄子']
@@ -470,8 +470,8 @@ def _get_vision_token() -> str:
 
 def _vision_describe(prompt: str = "请用简短的中文描述你看到的画面，不超过3句话。") -> str | None:
     """抓取当前摄像头画面，调用智控台视觉API描述"""
-    global latest_frame
-    frame = latest_frame
+    global latest_raw_frame
+    frame = latest_raw_frame
     if frame is None:
         return "我现在看不到东西，摄像头可能没开。"
     try:
@@ -1278,6 +1278,7 @@ class FaceTracker:
 from flask import Flask, Response, jsonify, send_from_directory, request
 
 latest_frame = None
+latest_raw_frame = None  # 原始帧（不带标注，给视觉识别用）
 latest_results = []
 tracker_status = {}
 is_running = True
@@ -1387,7 +1388,7 @@ def make_placeholder_frame(width, height, text="摄像头未连接"):
 
 
 def camera_tracking_loop(api_url, camera_id, width, height, fps_limit, gimbal, greeter, gesture_det):
-    global latest_frame, latest_results, tracker_status, is_running
+    global latest_frame, latest_raw_frame, latest_results, tracker_status, is_running
     global _last_happy_ts, _last_happy_day
     global last_activity_time, camera_sleeping
 
@@ -1455,6 +1456,7 @@ def camera_tracking_loop(api_url, camera_id, width, height, fps_limit, gimbal, g
 
         if now - last_send < frame_interval:
             with lock:
+                latest_raw_frame = frame.copy()
                 latest_frame = draw_tracking_results(frame, latest_results, tracker.tracking_name, gesture)
                 tracker_status["gesture"] = gesture
             continue
@@ -1490,6 +1492,7 @@ def camera_tracking_loop(api_url, camera_id, width, height, fps_limit, gimbal, g
 
                 with lock:
                     latest_results = faces
+                    latest_raw_frame = frame.copy()
                     latest_frame = draw_tracking_results(frame, faces, tracker.tracking_name, gesture)
                     # 多多状态
                     xz_status = "未连接"
@@ -1524,6 +1527,7 @@ def camera_tracking_loop(api_url, camera_id, width, height, fps_limit, gimbal, g
                 add_log("ERROR", f"API 连接失败: {e}")
             with lock:
                 latest_results = []
+                latest_raw_frame = frame.copy()
                 latest_frame = draw_tracking_results(frame, [], None, gesture)
 
     close_camera(cam_type, cam_obj)
