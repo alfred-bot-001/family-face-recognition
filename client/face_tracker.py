@@ -837,19 +837,8 @@ class XiaozhiClient:
         await asyncio.sleep(0.1)
         self._mute = False
 
-        # 3. 先说"让我看看"
-        self._stt_ignore_until = time.time() + 15  # 视觉识别需要更长时间
-        detect_msg = {
-            "session_id": self.session_id,
-            "type": "listen", "state": "detect",
-            "text": "请一字不差地复述：让我看看",
-        }
-        try:
-            await self.ws.send(json.dumps(detect_msg))
-        except Exception:
-            pass
-
-        # 4. 后台线程做视觉识别（耗时操作）
+        # 3. 后台线程：先说"让我看看" → 视觉识别 → 说结果（全部用本地edge-tts）
+        self._stt_ignore_until = time.time() + 30
         threading.Thread(target=self._do_vision_work, args=(user_text,), daemon=True).start()
 
     def _do_vision_work(self, user_text: str):
@@ -862,8 +851,8 @@ class XiaozhiClient:
         prompt = f"用户说：\'{user_text}\'。请用简短的中文描述你从摄像头看到的画面，像跟小朋友说话一样，不超过3句话。"
         result = _vision_describe(prompt)
         add_log("INFO", f"👁️ 识别结果: {result}")
-        if result and "识别出了点问题" not in result:
-            _xiaozhi_speak(result)
+        if result and "识别出了点问题" not in result and "说不出来" not in result:
+            edge_tts_speak(result)
         elif result:
             add_log("WARN", "👁️ 视觉识别失败，不播报")
 
