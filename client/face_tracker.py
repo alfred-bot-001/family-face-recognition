@@ -144,6 +144,30 @@ def speak(text: str, device: str = AUDIO_PLAY):
 def speak_async(text: str, device: str = AUDIO_PLAY):
     threading.Thread(target=speak, args=(text, device), daemon=True).start()
 
+def edge_tts_speak(text: str, voice: str = "zh-CN-YunxiaNeural", device: str = AUDIO_PLAY):
+    """用 edge-tts 生成语音并通过指定声卡播放（不经过LLM）"""
+    import tempfile, os
+    with _tts_lock:
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+                tmp_path = tmp.name
+            subprocess.run(
+                ["edge-tts", "--voice", voice, "--text", text, "--write-media", tmp_path],
+                capture_output=True, timeout=15
+            )
+            # mp3 → pcm via ffmpeg → aplay 指定声卡
+            subprocess.run(
+                f"ffmpeg -y -i {tmp_path} -f s16le -ar 24000 -ac 1 - 2>/dev/null | aplay -D {device} -f S16_LE -r 24000 -c 1 -q",
+                shell=True, timeout=30
+            )
+        except Exception as e:
+            log.error(f"edge-tts 播放失败: {e}")
+        finally:
+            if tmp_path:
+                try: os.unlink(tmp_path)
+                except: pass
+
 
 # ============================================================
 #  M2 硬件唤醒词检测 (正确帧协议)
@@ -469,7 +493,7 @@ def _vision_describe(prompt: str = "请用简短的中文描述你看到的画�
         if resp.status_code == 200:
             data = resp.json()
             if data.get("success"):
-                return data.get("response", "我看到了，但说不出来。").strip()
+                return data.get('result', data.get('response', '我看到了，但说不出来。')).strip()
             else:
                 log.error(f"Vision API 业务错误: {data.get('message')}")
                 return "识别出了点问题，稍后再试。"
@@ -829,7 +853,9 @@ class XiaozhiClient:
         threading.Thread(target=self._do_vision_work, args=(user_text,), daemon=True).start()
 
     def _do_vision_work(self, user_text: str):
-        """后台线程：抓帧 → vision → 多多说结果"""
+        """后台线程：先说让我看看 → 抓帧 → vision → 说结果（全部本地edge-tts）"""
+        add_log("INFO", "👁️ 让我看看...")
+        edge_tts_speak("让我看看")
         add_log("INFO", "📸 抓取画面...")
         touch_activity()
         time.sleep(0.3)
