@@ -144,7 +144,7 @@ def speak(text: str, device: str = AUDIO_PLAY):
 def speak_async(text: str, device: str = AUDIO_PLAY):
     threading.Thread(target=speak, args=(text, device), daemon=True).start()
 
-def edge_tts_speak(text: str, voice: str = "en-US-EmmaMultilingualNeural", device: str = AUDIO_PLAY):
+def edge_tts_speak(text: str, voice: str = "en-US-AnaNeural", device: str = AUDIO_PLAY):
     """用 edge-tts 生成语音并通过指定声卡播放（不经过LLM）"""
     import tempfile, os
     with _tts_lock:
