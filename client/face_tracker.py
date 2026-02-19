@@ -65,10 +65,10 @@ M2_BAUD = 115200
 XIAOZHI_WS_URL = "ws://192.168.0.69:8100/xiaozhi/v1/"
 XIAOZHI_DEVICE_ID = "pi-laosan-001"
 
-# 视觉识别 (ollama vision)
-OLLAMA_VISION_URL = "http://192.168.0.69:11434/api/generate"
-OLLAMA_VISION_MODEL = "llama3.2-vision:11b"
-_VISION_KEYWORDS = ['看看', '看一下', '你看', '看到了什么', '看到什么', '前面有什么', '周围有什么', '眼前', '看一看']
+# 视觉识别 (智控台 VLLM API)
+VISION_API_URL = "http://192.168.0.69:8103/mcp/vision/explain"
+VISION_AUTH_SECRET = "f9e18e72-09ad-4cdf-9a34-62ee2ff2adfc"
+_VISION_KEYWORDS = ['看看', '看一下', '你看', '看到了什么', '看到什么', '前面有什么', '周围有什么', '眼前', '看一看', '看我', '手里拿', '拿的什么', '这是什么', '那是什么', '什么东西']
 
 # 拍照功能
 _PHOTO_KEYWORDS = ['拍照', '拍个照', '拍张照', '照相', '拍一张', '来一张', '茄子']
@@ -143,6 +143,30 @@ def speak(text: str, device: str = AUDIO_PLAY):
 
 def speak_async(text: str, device: str = AUDIO_PLAY):
     threading.Thread(target=speak, args=(text, device), daemon=True).start()
+
+def edge_tts_speak(text: str, voice: str = "zh-CN-YunxiaNeural", device: str = AUDIO_PLAY):
+    """用 edge-tts 生成语音并通过指定声卡播放（不经过LLM）"""
+    import tempfile, os
+    with _tts_lock:
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+                tmp_path = tmp.name
+            subprocess.run(
+                ["edge-tts", "--voice", voice, "--text", text, "--write-media", tmp_path],
+                capture_output=True, timeout=15
+            )
+            # mp3 → pcm via ffmpeg → aplay 指定声卡
+            subprocess.run(
+                f"ffmpeg -y -i {tmp_path} -f s16le -ar 24000 -ac 1 - 2>/dev/null | aplay -D {device} -f S16_LE -r 24000 -c 1 -q",
+                shell=True, timeout=30
+            )
+        except Exception as e:
+            log.error(f"edge-tts 播放失败: {e}")
+        finally:
+            if tmp_path:
+                try: os.unlink(tmp_path)
+                except: pass
 
 
 # ============================================================
@@ -434,28 +458,47 @@ class WakeWordListener:
 # ============================================================
 
 # ============================================================
-#  视觉识别 (抓帧 → ollama vision)
+#  视觉识别 (抓帧 → 智控台 VLLM API)
 # ============================================================
+def _get_vision_token() -> str:
+    """生成智控台 Vision API 的 JWT token"""
+    import jwt as pyjwt
+    from datetime import datetime, timedelta, timezone
+    expire = datetime.now(timezone.utc) + timedelta(hours=1)
+    payload = {"device_id": XIAOZHI_DEVICE_ID, "exp": expire.timestamp()}
+    return pyjwt.encode(payload, VISION_AUTH_SECRET, algorithm="HS256")
+
 def _vision_describe(prompt: str = "请用简短的中文描述你看到的画面，不超过3句话。") -> str | None:
-    """抓取当前摄像头画面，调用 ollama vision 模型描述"""
-    global latest_frame
-    frame = latest_frame
+    """抓取当前摄像头画面，调用智控台视觉API描述"""
+    global latest_raw_frame
+    frame = latest_raw_frame
     if frame is None:
         return "我现在看不到东西，摄像头可能没开。"
     try:
-        import base64
         _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        img_b64 = base64.b64encode(jpeg.tobytes()).decode('utf-8')
-        resp = requests.post(OLLAMA_VISION_URL, json={
-            "model": OLLAMA_VISION_MODEL,
-            "prompt": prompt,
-            "images": [img_b64],
-            "stream": False,
-        }, timeout=30)
+        token = _get_vision_token()
+        resp = requests.post(
+            VISION_API_URL,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Device-Id": XIAOZHI_DEVICE_ID,
+                "Client-Id": XIAOZHI_DEVICE_ID,
+            },
+            files={
+                "question": (None, prompt),
+                "image": ("frame.jpg", jpeg.tobytes(), "image/jpeg"),
+            },
+            timeout=30,
+        )
         if resp.status_code == 200:
-            return resp.json().get("response", "我看到了，但说不出来。").strip()
+            data = resp.json()
+            if data.get("success"):
+                return data.get('result', data.get('response', '我看到了，但说不出来。')).strip()
+            else:
+                log.error(f"Vision API 业务错误: {data.get('message')}")
+                return "识别出了点问题，稍后再试。"
         else:
-            log.error(f"Vision API 错误: {resp.status_code}")
+            log.error(f"Vision API HTTP错误: {resp.status_code}")
             return "识别出了点问题，稍后再试。"
     except Exception as e:
         log.error(f"Vision 识别失败: {e}")
@@ -476,6 +519,7 @@ class XiaozhiClient:
         self._play_proc = None
         self._send_task = None
         self._mute = False  # 打断时静音，忽略残余音频帧
+        self._stt_ignore_until = 0  # 忽略自己发的detect回显直到此时间戳
 
     async def connect(self):
         import websockets
@@ -597,6 +641,9 @@ class XiaozhiClient:
         elif t == "stt":
             stt_text = msg.get('text', '')
             add_log("INFO", f"🎤 识别: {stt_text}")
+            # 跳过自己发的detect消息回显（时间窗口内忽略）
+            if time.time() < self._stt_ignore_until:
+                return
             # 用户说了休息相关的话 → 直接打断并假睡
             _sleep_kw = ['你休息', '去休息', '去睡', '你睡', '关机', '待机', '休眠']
             if any(kw in stt_text for kw in _sleep_kw):
@@ -663,6 +710,7 @@ class XiaozhiClient:
         self._mute = False
 
         # 3. 说"茄子！"
+        self._stt_ignore_until = time.time() + 10
         detect_msg = {
             "session_id": self.session_id,
             "type": "listen", "state": "detect",
@@ -745,6 +793,7 @@ class XiaozhiClient:
         self._mute = False
 
         # 3. 播"呼呼呼"睡觉声
+        self._stt_ignore_until = time.time() + 8
         detect_msg = {
             "session_id": self.session_id,
             "type": "listen", "state": "detect",
@@ -788,30 +837,24 @@ class XiaozhiClient:
         await asyncio.sleep(0.1)
         self._mute = False
 
-        # 3. 先说"让我看看"
-        detect_msg = {
-            "session_id": self.session_id,
-            "type": "listen", "state": "detect",
-            "text": "请只回复四个字：让我看看",
-        }
-        try:
-            await self.ws.send(json.dumps(detect_msg))
-        except Exception:
-            pass
-
-        # 4. 后台线程做视觉识别（耗时操作）
+        # 3. 后台线程：先说"让我看看" → 视觉识别 → 说结果（全部用本地edge-tts）
+        self._stt_ignore_until = time.time() + 30
         threading.Thread(target=self._do_vision_work, args=(user_text,), daemon=True).start()
 
     def _do_vision_work(self, user_text: str):
-        """后台线程：抓帧 → vision → 多多说结果"""
+        """后台线程：先说让我看看 → 抓帧 → vision → 说结果（全部本地edge-tts）"""
+        add_log("INFO", "👁️ 让我看看...")
+        edge_tts_speak("让我看看")
         add_log("INFO", "📸 抓取画面...")
         touch_activity()
         time.sleep(0.3)
         prompt = f"用户说：\'{user_text}\'。请用简短的中文描述你从摄像头看到的画面，像跟小朋友说话一样，不超过3句话。"
         result = _vision_describe(prompt)
         add_log("INFO", f"👁️ 识别结果: {result}")
-        if result:
-            _xiaozhi_speak(result)
+        if result and "识别出了点问题" not in result and "说不出来" not in result:
+            edge_tts_speak(result)
+        elif result:
+            add_log("WARN", "👁️ 视觉识别失败，不播报")
 
     async def announce_online(self):
         if not self.connected:
@@ -953,11 +996,12 @@ def _xiaozhi_speak(text: str):
     """通过多多服务端 TTS 播放文字"""
     if not _xiaozhi_client or not _xiaozhi_client.connected or not _xiaozhi_loop:
         return
+    _xiaozhi_client._stt_ignore_until = time.time() + 10
     import json as _json
     detect = {
         "session_id": _xiaozhi_client.session_id,
         "type": "listen", "state": "detect",
-        "text": f"请只回复：{text}",
+        "text": f"请一字不差地复述以下内容，不要添加任何其他文字：{text}",
     }
 
     async def _send():
@@ -1234,6 +1278,7 @@ class FaceTracker:
 from flask import Flask, Response, jsonify, send_from_directory, request
 
 latest_frame = None
+latest_raw_frame = None  # 原始帧（不带标注，给视觉识别用）
 latest_results = []
 tracker_status = {}
 is_running = True
@@ -1343,7 +1388,7 @@ def make_placeholder_frame(width, height, text="摄像头未连接"):
 
 
 def camera_tracking_loop(api_url, camera_id, width, height, fps_limit, gimbal, greeter, gesture_det):
-    global latest_frame, latest_results, tracker_status, is_running
+    global latest_frame, latest_raw_frame, latest_results, tracker_status, is_running
     global _last_happy_ts, _last_happy_day
     global last_activity_time, camera_sleeping
 
@@ -1411,6 +1456,7 @@ def camera_tracking_loop(api_url, camera_id, width, height, fps_limit, gimbal, g
 
         if now - last_send < frame_interval:
             with lock:
+                latest_raw_frame = frame.copy()
                 latest_frame = draw_tracking_results(frame, latest_results, tracker.tracking_name, gesture)
                 tracker_status["gesture"] = gesture
             continue
@@ -1421,7 +1467,7 @@ def camera_tracking_loop(api_url, camera_id, width, height, fps_limit, gimbal, g
             resp = requests.post(
                 f"{api_url}/recognize",
                 files={"file": ("frame.jpg", jpeg.tobytes(), "image/jpeg")},
-                timeout=5,
+                timeout=15,
             )
             if resp.status_code == 200:
                 data = resp.json()
@@ -1446,6 +1492,7 @@ def camera_tracking_loop(api_url, camera_id, width, height, fps_limit, gimbal, g
 
                 with lock:
                     latest_results = faces
+                    latest_raw_frame = frame.copy()
                     latest_frame = draw_tracking_results(frame, faces, tracker.tracking_name, gesture)
                     # 多多状态
                     xz_status = "未连接"
@@ -1480,6 +1527,7 @@ def camera_tracking_loop(api_url, camera_id, width, height, fps_limit, gimbal, g
                 add_log("ERROR", f"API 连接失败: {e}")
             with lock:
                 latest_results = []
+                latest_raw_frame = frame.copy()
                 latest_frame = draw_tracking_results(frame, [], None, gesture)
 
     close_camera(cam_type, cam_obj)
