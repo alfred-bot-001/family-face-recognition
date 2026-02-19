@@ -36,10 +36,11 @@
         .stat { text-align: center; padding: 8px; background: #252525; border-radius: 8px; }
         .stat-value { font-size: 1.4rem; font-weight: 700; color: #4caf50; }
         .stat-label { font-size: 0.7rem; color: #666; margin-top: 2px; }
-        .log { max-height: 200px; overflow-y: auto; font-size: 0.75rem; font-family: monospace; color: #666; }
+        .log { max-height: 350px; overflow-y: auto; font-size: 0.75rem; font-family: monospace; color: #888; scroll-behavior: smooth; }
         .log-entry { padding: 2px 0; border-bottom: 1px solid #222; }
         .log-entry .time { color: #555; }
         .log-entry .name { color: #4caf50; font-weight: 600; }
+        .log-entry.error { color: #ef4444; } .log-entry.warn { color: #f59e0b; } .log-entry.info { color: #94a3b8; }
         @media (max-width: 768px) { .main-content { grid-template-columns: 1fr; } .eye-bar { height: 110px; } }
     </style>
 </head>
@@ -80,7 +81,21 @@ function setServoDirection(pan=0,tilt=0){targetX=clamp(pan/180,-1,1);targetY=cla
 function drawEyes(ts){const w=canvas.width,h=canvas.height;lookX+=(targetX-lookX)*.12;lookY+=(targetY-lookY)*.12;if(ts>nextBlink){blink=1;nextBlink=ts+1900+Math.random()*2200;}blink+=(0-blink)*.18;ctx.clearRect(0,0,w,h);const cxL=w*.37,cxR=w*.63,cy=h*.52,eyeW=Math.min(w*.18,150*dpr),eyeH=Math.min(h*.42,72*dpr),irisR=Math.min(eyeW,eyeH)*.23,px=lookX*eyeW*.22,py=lookY*eyeH*.2,open=1-blink*.92;function eye(cx){ctx.save();ctx.beginPath();ctx.ellipse(cx,cy,eyeW,eyeH*open,0,0,Math.PI*2);ctx.fillStyle='#06111f';ctx.fill();ctx.strokeStyle='#1d4ed8';ctx.lineWidth=2*dpr;ctx.stroke();ctx.clip();const gx=cx+px,gy=cy+py;const g=ctx.createRadialGradient(gx-irisR*.2,gy-irisR*.2,irisR*.2,gx,gy,irisR*1.8);g.addColorStop(0,'#7dd3fc');g.addColorStop(.5,'#3b82f6');g.addColorStop(1,'#0b1020');ctx.beginPath();ctx.arc(gx,gy,irisR*1.6,0,Math.PI*2);ctx.fillStyle=g;ctx.fill();ctx.beginPath();ctx.arc(gx,gy,irisR*.55,0,Math.PI*2);ctx.fillStyle='#020617';ctx.fill();ctx.beginPath();ctx.arc(gx-irisR*.2,gy-irisR*.2,irisR*.18,0,Math.PI*2);ctx.fillStyle='#e0f2fe';ctx.fill();ctx.restore();}eye(cxL);eye(cxR);requestAnimationFrame(drawEyes);} 
 window.setServoDirection=setServoDirection; window.addEventListener('resize',resizeEyes); resizeEyes(); requestAnimationFrame(drawEyes);
 
-function addLog(name,confidence){const now=new Date().toLocaleTimeString('zh-CN');const entry=document.createElement('div');entry.className='log-entry';entry.innerHTML=`<span class="time">${now}</span> <span class="name">${name}</span> (${(confidence*100).toFixed(0)}%)`;logPanel.prepend(entry);while(logPanel.children.length>MAX_LOG){logPanel.removeChild(logPanel.lastChild);}}
+let lastLogTs = '';
+async function pollLogs(){
+  try{
+    const resp = await fetch('/api/logs');
+    const logs = await resp.json();
+    if(!logs.length) return;
+    if(logs[0].time === lastLogTs && logs.length === logPanel.children.length) return;
+    lastLogTs = logs[0].time;
+    logPanel.innerHTML = logs.map(e => {
+      const lvl = (e.level||'').toLowerCase();
+      const cls = lvl === 'error' ? 'log-entry error' : lvl === 'warn' ? 'log-entry warn' : 'log-entry info';
+      return '<div class="' + cls + '"><span class="time">' + e.time + '</span> ' + e.msg + '</div>';
+    }).join('');
+  }catch(e){}
+}
 
 async function pollStatus(){
   try{
@@ -93,10 +108,11 @@ async function pollStatus(){
     if(pan!==null && tilt!==null){servoText.innerHTML=`pan: ${pan.toFixed(1)}°<br>tilt: ${tilt.toFixed(1)}°`;setServoDirection(pan,tilt);} else {servoText.innerHTML='pan: --°<br>tilt: --°';}
     const faces=data.faces||[]; faceCount.textContent=faces.length; const known=faces.filter(f=>f.name!=='unknown'); knownCount.textContent=known.length;
     if(faces.length===0){faceList.innerHTML='<div class="no-faces">未检测到人脸</div>';} else {faceList.innerHTML=faces.map(f=>{const isUnknown=f.name==='unknown';const cls=isUnknown?'face-item unknown':'face-item';const age=f.age?`${f.age}岁`:'';const gender=f.gender==='M'?'男':f.gender==='F'?'女':'';const meta=[age,gender].filter(Boolean).join(' · ');return `<div class="${cls}"><div><div class="face-name">${f.name}</div>${meta?`<div class="face-meta">${meta}</div>`:''}</div><div class="face-conf">${(f.confidence*100).toFixed(1)}%</div></div>`;}).join('');}
-    const currentNames=new Set(known.map(f=>f.name)); for(const f of known){if(!lastSeenNames.has(f.name))addLog(f.name,f.confidence);} lastSeenNames=currentNames;
+    
   }catch(e){statusDot.className='dot offline'; statusText.textContent='离线';}
 }
 setInterval(pollStatus,1000); pollStatus();
+setInterval(pollLogs,1500); pollLogs();
 const videoStream=document.getElementById('videoStream'); videoStream.onerror=()=>{setTimeout(()=>{videoStream.src='/video_feed?'+Date.now();},2000);};
 </script>
 </body></html>

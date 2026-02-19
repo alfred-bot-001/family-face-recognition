@@ -16,3 +16,4 @@ api.log
 *.log
 *.bak
 client/models/
+photos/

@@ -24,7 +24,7 @@ DEFAULT_WIDTH = 640
 DEFAULT_HEIGHT = 480
 DEFAULT_FPS_LIMIT = 8
 DEFAULT_PORT = 5000
-DEFAULT_SERIAL = "/dev/servo_ctrl"
+DEFAULT_SERIAL = "/dev/ttyAMA0"
 DEFAULT_BAUD = 115200
 
 # 跟踪优先级
@@ -40,7 +40,7 @@ GREET_MESSAGES = {
 GREET_DEFAULT = "你好！"
 
 # 摄像头空闲关闭
-IDLE_CAMERA_TIMEOUT = 300  # 5分钟无人脸+无交互则关闭摄像头
+IDLE_CAMERA_TIMEOUT = 1800  # 30分钟无人脸+无交互则关闭摄像头
 
 # 舵机参数
 PAN_MIN, PAN_MAX = -180, 180
@@ -69,6 +69,13 @@ XIAOZHI_DEVICE_ID = "pi-laosan-001"
 OLLAMA_VISION_URL = "http://192.168.0.69:11434/api/generate"
 OLLAMA_VISION_MODEL = "llama3.2-vision:11b"
 _VISION_KEYWORDS = ['看看', '看一下', '你看', '看到了什么', '看到什么', '前面有什么', '周围有什么', '眼前', '看一看']
+
+# 拍照功能
+_PHOTO_KEYWORDS = ['拍照', '拍个照', '拍张照', '照相', '拍一张', '来一张', '茄子']
+PHOTO_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "photos")
+TELEGRAM_BOT_TOKEN = "8517750579:AAEHgdBOp8A2T-ORimYcwbMyFhmxfUBDMkM"
+TELEGRAM_CHAT_ID = "7929939096"
+
 SHERPA_ASR_DIR = os.path.join(os.path.dirname(__file__), "models",
                               "sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16", "96")
 
@@ -464,7 +471,6 @@ class XiaozhiClient:
         self.ws = None
         self.connected = False
         self.is_speaking = False
-        self._sleep_requested = False
         self.is_listening = False
         self._rec_proc = None
         self._play_proc = None
@@ -587,24 +593,24 @@ class XiaozhiClient:
                         self._play_proc.kill()
                     self._play_proc = None
                 add_log("INFO", "🔊 多多说话结束")
-                # 说完话后检查是否要假装休眠
-                if self._sleep_requested:
-                    self._sleep_requested = False
-                    add_log("INFO", "😴 多多假装休眠（低头）")
-                    if self.gimbal and getattr(self.gimbal, 'connected', False):
-                        self.gimbal.move_to(0, -30, speed=5, acc=1)
-                    _camera_wake_event.clear()
+                # 假睡由 _do_fake_sleep 处理，不在这里
         elif t == "stt":
             stt_text = msg.get('text', '')
             add_log("INFO", f"🎤 识别: {stt_text}")
-            # 用户说了休息相关的话才触发休眠
+            # 用户说了休息相关的话 → 直接打断并假睡
             _sleep_kw = ['你休息', '去休息', '去睡', '你睡', '关机', '待机', '休眠']
             if any(kw in stt_text for kw in _sleep_kw):
-                self._sleep_requested = True
-            # 视觉识别: 用户说"看看"类关键词
+                asyncio.ensure_future(self._do_fake_sleep())
+            # 视觉识别: 用户说"看看"类关键词 → 打断LLM + 启动视觉
             if any(kw in stt_text for kw in _VISION_KEYWORDS):
-                add_log("INFO", "👁️ 触发视觉识别...")
-                threading.Thread(target=self._do_vision, args=(stt_text,), daemon=True).start()
+                add_log("INFO", "👁️ 触发视觉识别，打断当前对话...")
+                self._mute = True
+                asyncio.ensure_future(self._abort_and_vision(stt_text))
+            # 拍照: 用户说"拍照"类关键词
+            if any(kw in stt_text for kw in _PHOTO_KEYWORDS):
+                add_log("INFO", "📸 触发拍照...")
+                self._mute = True
+                asyncio.ensure_future(self._do_take_photo())
         elif t == "llm":
             add_log("INFO", f"🤖 {msg.get('text', '')}")
         elif t == "hello":
@@ -635,17 +641,177 @@ class XiaozhiClient:
             log.error(f"播放错误: {e}")
             self._play_proc = None
 
-    def _do_vision(self, user_text: str):
+    async def _do_take_photo(self):
+        """拍照：打断 → 说'茄子' → 拍照保存 → 发Telegram"""
+        # 1. 打断服务端
+        try:
+            abort = {"session_id": self.session_id, "type": "abort", "reason": "photo"}
+            await self.ws.send(json.dumps(abort))
+        except Exception:
+            pass
+
+        # 2. 停止播放
+        self.is_speaking = False
+        if self._play_proc:
+            try: self._play_proc.stdin.close()
+            except Exception: pass
+            try: self._play_proc.kill(); self._play_proc.wait(timeout=1)
+            except Exception: pass
+            self._play_proc = None
+
+        await asyncio.sleep(0.1)
+        self._mute = False
+
+        # 3. 说"茄子！"
+        detect_msg = {
+            "session_id": self.session_id,
+            "type": "listen", "state": "detect",
+            "text": "请只回复：三、二、一，茄子！",
+        }
+        try:
+            await self.ws.send(json.dumps(detect_msg))
+        except Exception:
+            pass
+
+        # 4. 等TTS说完再拍
+        await asyncio.sleep(3)
+
+        # 5. 后台拍照+发送
+        threading.Thread(target=self._take_photo_work, daemon=True).start()
+
+    def _take_photo_work(self):
+        """后台：抓帧保存+发Telegram"""
+        import datetime
+        global latest_frame
+        touch_activity()
+
+        frame = latest_frame
+        if frame is None:
+            add_log("ERROR", "📸 拍照失败：摄像头未开启")
+            _xiaozhi_speak("拍照失败了，摄像头没开呢")
+            return
+
+        # 保存到 photos/YYYY-MM-DD/
+        today = datetime.date.today().strftime("%Y-%m-%d")
+        photo_dir = os.path.join(PHOTO_DIR, today)
+        os.makedirs(photo_dir, exist_ok=True)
+        ts = datetime.datetime.now().strftime("%H%M%S")
+        filename = f"photo_{ts}.jpg"
+        filepath = os.path.join(photo_dir, filename)
+        cv2.imwrite(filepath, frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        add_log("INFO", f"📸 照片已保存: {filepath}")
+
+        # 发 Telegram
+        try:
+            with open(filepath, 'rb') as f:
+                resp = requests.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto",
+                    data={"chat_id": TELEGRAM_CHAT_ID, "caption": f"📸 多多拍照 {today} {ts}"},
+                    files={"photo": (filename, f, "image/jpeg")},
+                    timeout=15,
+                )
+            if resp.status_code == 200:
+                add_log("INFO", "📸 照片已发送到 Telegram")
+                _xiaozhi_speak("照片拍好了，已经发到你手机上啦")
+            else:
+                add_log("ERROR", f"📸 Telegram 发送失败: {resp.status_code}")
+                _xiaozhi_speak("照片拍好了，但是发送失败了")
+        except Exception as e:
+            add_log("ERROR", f"📸 Telegram 发送异常: {e}")
+            _xiaozhi_speak("照片拍好了，但是发送出了点问题")
+
+    async def _do_fake_sleep(self):
+        """假睡：打断对话 → 播'呼呼呼' → 低头 → 关摄像头"""
+        add_log("INFO", "😴 多多准备假睡...")
+
+        # 1. 打断服务端 LLM
+        self._mute = True
+        try:
+            abort = {"session_id": self.session_id, "type": "abort", "reason": "sleep"}
+            await self.ws.send(json.dumps(abort))
+        except Exception:
+            pass
+
+        # 2. 停止播放
+        self.is_speaking = False
+        if self._play_proc:
+            try: self._play_proc.stdin.close()
+            except Exception: pass
+            try: self._play_proc.kill(); self._play_proc.wait(timeout=1)
+            except Exception: pass
+            self._play_proc = None
+
+        await asyncio.sleep(0.1)
+        self._mute = False
+
+        # 3. 播"呼呼呼"睡觉声
+        detect_msg = {
+            "session_id": self.session_id,
+            "type": "listen", "state": "detect",
+            "text": "请只回复：呼～呼～呼～",
+        }
+        try:
+            await self.ws.send(json.dumps(detect_msg))
+        except Exception:
+            pass
+
+        # 4. 等TTS播完再低头+关摄像头
+        await asyncio.sleep(3)
+        add_log("INFO", "😴 多多假睡中（低头+关摄像头）")
+        if self.gimbal and getattr(self.gimbal, 'connected', False):
+            self.gimbal.move_to(0, -30, speed=3, acc=1)
+        _camera_wake_event.clear()
+
+    async def _abort_and_vision(self, user_text: str):
+        """打断服务端LLM → 说'让我看看' → 视觉识别 → 说结果"""
+        # 1. 打断服务端
+        try:
+            abort = {"session_id": self.session_id, "type": "abort", "reason": "vision_request"}
+            await self.ws.send(json.dumps(abort))
+        except Exception:
+            pass
+
+        # 2. 停止播放
+        self.is_speaking = False
+        if self._play_proc:
+            try:
+                self._play_proc.stdin.close()
+            except Exception:
+                pass
+            try:
+                self._play_proc.kill()
+                self._play_proc.wait(timeout=1)
+            except Exception:
+                pass
+            self._play_proc = None
+
+        await asyncio.sleep(0.1)
+        self._mute = False
+
+        # 3. 先说"让我看看"
+        detect_msg = {
+            "session_id": self.session_id,
+            "type": "listen", "state": "detect",
+            "text": "请只回复四个字：让我看看",
+        }
+        try:
+            await self.ws.send(json.dumps(detect_msg))
+        except Exception:
+            pass
+
+        # 4. 后台线程做视觉识别（耗时操作）
+        threading.Thread(target=self._do_vision_work, args=(user_text,), daemon=True).start()
+
+    def _do_vision_work(self, user_text: str):
         """后台线程：抓帧 → vision → 多多说结果"""
         add_log("INFO", "📸 抓取画面...")
-        touch_activity()  # 确保摄像头不休眠
-        time.sleep(0.3)   # 等摄像头就绪
-        # 根据用户说的话构造 prompt
-        prompt = f"用户说：'{user_text}'。请用简短的中文回答，描述你从摄像头看到的画面，不超过3句话。"
+        touch_activity()
+        time.sleep(0.3)
+        prompt = f"用户说：\'{user_text}\'。请用简短的中文描述你从摄像头看到的画面，像跟小朋友说话一样，不超过3句话。"
         result = _vision_describe(prompt)
         add_log("INFO", f"👁️ 识别结果: {result}")
         if result:
-            _xiaozhi_speak(f"请用自然的语气回复：{result}")
+            _xiaozhi_speak(result)
 
     async def announce_online(self):
         if not self.connected:
@@ -1066,7 +1232,6 @@ class FaceTracker:
 #  摄像头 + 主循环
 # ============================================================
 from flask import Flask, Response, jsonify, send_from_directory, request
-from gesture_detector import GestureDetector
 
 latest_frame = None
 latest_results = []
@@ -1222,7 +1387,7 @@ def camera_tracking_loop(api_url, camera_id, width, height, fps_limit, gimbal, g
 
         # 空闲休眠检查：5分钟无人脸+无交互 → 关闭摄像头
         if not camera_sleeping and (now - last_activity_time > IDLE_CAMERA_TIMEOUT):
-            add_log("INFO", "😴 5分钟无活动，关闭摄像头进入休眠")
+            add_log("INFO", "😴 30分钟无活动，关闭摄像头进入休眠")
             # 舵机低头60°，模拟睡觉
             if gimbal_instance and getattr(gimbal_instance, 'connected', False):
                 gimbal_instance.move_to(0, -30, speed=5, acc=1)
@@ -1242,10 +1407,7 @@ def camera_tracking_loop(api_url, camera_id, width, height, fps_limit, gimbal, g
             last_retry = time.time()
             continue
 
-        if frame_count > fps_limit * 5:
-            gesture = gesture_det.detect(frame)
-        else:
-            gesture = {"hands_count": 0, "gesture": "none", "wave_detected": False}
+        gesture = None
 
         if now - last_send < frame_interval:
             with lock:
@@ -1429,6 +1591,40 @@ def m2_api_state():
     """M2 麦克风阵列状态（心跳、唤醒事件、角度）"""
     return jsonify(m2_state)
 
+@flask_app.route("/api/photo", methods=["POST"])
+def api_take_photo():
+    """网页端触发拍照"""
+    import datetime
+    global latest_frame
+    touch_activity()
+    frame = latest_frame
+    if frame is None:
+        return jsonify({"ok": False, "error": "摄像头未开启"})
+    today = datetime.date.today().strftime("%Y-%m-%d")
+    photo_dir = os.path.join(PHOTO_DIR, today)
+    os.makedirs(photo_dir, exist_ok=True)
+    ts = datetime.datetime.now().strftime("%H%M%S")
+    filename = f"photo_{ts}.jpg"
+    filepath = os.path.join(photo_dir, filename)
+    cv2.imwrite(filepath, frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    add_log("INFO", f"📸 照片已保存: {filepath}")
+    # 发 Telegram
+    try:
+        with open(filepath, 'rb') as f:
+            resp = requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto",
+                data={"chat_id": TELEGRAM_CHAT_ID, "caption": f"📸 拍照 {today} {ts}"},
+                files={"photo": (filename, f, "image/jpeg")},
+                timeout=15,
+            )
+        if resp.status_code == 200:
+            add_log("INFO", "📸 照片已发送到 Telegram")
+            return jsonify({"ok": True, "file": filepath})
+        else:
+            return jsonify({"ok": True, "file": filepath, "telegram": False})
+    except Exception as e:
+        return jsonify({"ok": True, "file": filepath, "telegram": False, "error": str(e)})
+
 @flask_app.route("/api/xiaozhi/logs")
 def xiaozhi_logs():
     """多多对话日志（从 log_buffer 过滤）"""
@@ -1441,7 +1637,7 @@ def xiaozhi_logs():
             lines.append(f"{entry['time']} [{entry['level']}] {msg}")
     # 页面期望 {"lines": [...]}，最多30条，倒序变正序
     lines = lines[:30]
-    lines.reverse()
+    lines.reverse()  # newest first
     return jsonify({"lines": lines})
 
 
@@ -1495,8 +1691,7 @@ def main():
     # 语音
     greeter_instance = VoiceGreeter(cooldown=GREET_COOLDOWN)
 
-    # 手势
-    gesture_instance = GestureDetector(log_func=add_log)
+    gesture_instance = None
 
     # 多多对话线程（启动语音由多多 announce_online 播报）
     if not args.no_xiaozhi and OPUS_OK:
