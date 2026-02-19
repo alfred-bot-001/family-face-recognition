@@ -24,7 +24,7 @@ DEFAULT_WIDTH = 640
 DEFAULT_HEIGHT = 480
 DEFAULT_FPS_LIMIT = 8
 DEFAULT_PORT = 5000
-DEFAULT_SERIAL = "/dev/ttyAMA0"
+DEFAULT_SERIAL = "/dev/servo_ctrl"
 DEFAULT_BAUD = 115200
 
 # 跟踪优先级
@@ -57,10 +57,10 @@ SAMPLE_RATE = 16000
 CHANNELS = 1
 FRAME_DURATION_MS = 60
 FRAME_SIZE = SAMPLE_RATE * FRAME_DURATION_MS // 1000  # 960
-AUDIO_PLAY = "plughw:3,0"   # USB PnP Audio Device 扬声器
+AUDIO_PLAY = "plughw:2,0"   # USB PnP Audio Device 扬声器
 AUDIO_REC = "plughw:5,0"    # M2 麦克风阵列录音
 WAKE_WORD = "多多"
-M2_SERIAL_PORT = "/dev/ttyACM1"
+M2_SERIAL_PORT = "/dev/m2_mic"
 M2_BAUD = 115200
 XIAOZHI_WS_URL = "ws://192.168.0.69:8100/xiaozhi/v1/"
 XIAOZHI_DEVICE_ID = "pi-laosan-001"
