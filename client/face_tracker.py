@@ -64,6 +64,11 @@ M2_SERIAL_PORT = "/dev/m2_mic"
 M2_BAUD = 115200
 XIAOZHI_WS_URL = "ws://192.168.0.69:8100/xiaozhi/v1/"
 XIAOZHI_DEVICE_ID = "pi-laosan-001"
+
+# 视觉识别 (ollama vision)
+OLLAMA_VISION_URL = "http://192.168.0.69:11434/api/generate"
+OLLAMA_VISION_MODEL = "llama3.2-vision:11b"
+_VISION_KEYWORDS = ['看看', '看一下', '你看', '看到了什么', '看到什么', '前面有什么', '周围有什么', '眼前', '看一看']
 SHERPA_ASR_DIR = os.path.join(os.path.dirname(__file__), "models",
                               "sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16", "96")
 
@@ -420,6 +425,36 @@ class WakeWordListener:
 # ============================================================
 #  多多 WebSocket 客户端
 # ============================================================
+
+# ============================================================
+#  视觉识别 (抓帧 → ollama vision)
+# ============================================================
+def _vision_describe(prompt: str = "请用简短的中文描述你看到的画面，不超过3句话。") -> str | None:
+    """抓取当前摄像头画面，调用 ollama vision 模型描述"""
+    global latest_frame
+    frame = latest_frame
+    if frame is None:
+        return "我现在看不到东西，摄像头可能没开。"
+    try:
+        import base64
+        _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        img_b64 = base64.b64encode(jpeg.tobytes()).decode('utf-8')
+        resp = requests.post(OLLAMA_VISION_URL, json={
+            "model": OLLAMA_VISION_MODEL,
+            "prompt": prompt,
+            "images": [img_b64],
+            "stream": False,
+        }, timeout=30)
+        if resp.status_code == 200:
+            return resp.json().get("response", "我看到了，但说不出来。").strip()
+        else:
+            log.error(f"Vision API 错误: {resp.status_code}")
+            return "识别出了点问题，稍后再试。"
+    except Exception as e:
+        log.error(f"Vision 识别失败: {e}")
+        return "识别出了点问题，稍后再试。"
+
+
 class XiaozhiClient:
     def __init__(self, ws_url: str, device_id: str, gimbal=None):
         self.ws_url = ws_url
@@ -566,6 +601,10 @@ class XiaozhiClient:
             _sleep_kw = ['你休息', '去休息', '去睡', '你睡', '关机', '待机', '休眠']
             if any(kw in stt_text for kw in _sleep_kw):
                 self._sleep_requested = True
+            # 视觉识别: 用户说"看看"类关键词
+            if any(kw in stt_text for kw in _VISION_KEYWORDS):
+                add_log("INFO", "👁️ 触发视觉识别...")
+                threading.Thread(target=self._do_vision, args=(stt_text,), daemon=True).start()
         elif t == "llm":
             add_log("INFO", f"🤖 {msg.get('text', '')}")
         elif t == "hello":
@@ -595,6 +634,18 @@ class XiaozhiClient:
         except Exception as e:
             log.error(f"播放错误: {e}")
             self._play_proc = None
+
+    def _do_vision(self, user_text: str):
+        """后台线程：抓帧 → vision → 多多说结果"""
+        add_log("INFO", "📸 抓取画面...")
+        touch_activity()  # 确保摄像头不休眠
+        time.sleep(0.3)   # 等摄像头就绪
+        # 根据用户说的话构造 prompt
+        prompt = f"用户说：'{user_text}'。请用简短的中文回答，描述你从摄像头看到的画面，不超过3句话。"
+        result = _vision_describe(prompt)
+        add_log("INFO", f"👁️ 识别结果: {result}")
+        if result:
+            _xiaozhi_speak(f"请用自然的语气回复：{result}")
 
     async def announce_online(self):
         if not self.connected:
