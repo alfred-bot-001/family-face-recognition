@@ -8,28 +8,30 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background: #0f0f0f;
-            color: #e0e0e0;
-            min-height: 100vh;
+            background: #0f0f0f; color: #e0e0e0; min-height: 100vh;
         }
-        .container { max-width: 1200px; margin: 0 auto; padding: 16px; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 12px; }
+        /* Eye bar */
         .eye-bar {
-            width: 50%; height: 180px; margin: 0 auto 12px; border-radius: 16px;
+            width: 40%; height: 140px; margin: 0 auto 10px; border-radius: 14px;
             background: #000; overflow: hidden; position: relative;
         }
         #eyesCanvas { width: 100%; height: 100%; display: block; }
         .servo-overlay {
-            position: absolute; right: 10px; top: 10px;
-            background: rgba(0,0,0,.62); border: 1px solid rgba(59,130,246,.35);
-            color: #93c5fd; border-radius: 8px; padding: 6px 9px;
-            font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            position: absolute; right: 8px; top: 8px;
+            background: rgba(0,0,0,.6); border: 1px solid rgba(59,130,246,.35);
+            color: #93c5fd; border-radius: 6px; padding: 4px 8px;
+            font: 11px/1.3 monospace;
         }
         header {
             display: flex; justify-content: space-between; align-items: center;
-            padding: 12px 0; border-bottom: 1px solid #333; margin-bottom: 16px;
+            padding: 8px 0; border-bottom: 1px solid #333; margin-bottom: 12px;
         }
-        header h1 { font-size: 1.4rem; }
-        .main-content { display: grid; grid-template-columns: 1fr 300px; gap: 16px; }
+        header h1 { font-size: 1.2rem; }
+        .priority-list { font-size: 0.8rem; color: #888; }
+        .priority-list span { color: #ffeb3b; font-weight: 600; }
+        /* Top row: video left, logs right */
+        .top-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
         .video-panel {
             background: #1a1a1a; border-radius: 12px; overflow: hidden; position: relative;
         }
@@ -38,448 +40,454 @@
         }
         .tracking-overlay {
             position: absolute; top: 8px; left: 8px;
-            background: rgba(0,0,0,0.75); padding: 8px 14px; border-radius: 8px;
+            background: rgba(0,0,0,0.75); padding: 6px 12px; border-radius: 8px;
         }
-        .tracking-target { font-size: 1.1rem; font-weight: 700; }
+        .tracking-target { font-size: 1rem; font-weight: 700; }
         .tracking-target.active { color: #ffeb3b; }
         .tracking-target.idle { color: #888; }
-        .tracking-info { font-size: 0.8rem; color: #aaa; margin-top: 4px; font-family: monospace; }
-        .sidebar { display: flex; flex-direction: column; gap: 12px; }
-        .card { background: #1a1a1a; border-radius: 12px; padding: 16px; }
-        .card h2 { font-size: 0.95rem; font-weight: 600; margin-bottom: 10px; color: #aaa; }
-        .gimbal-display {
-            text-align: center; padding: 12px;
-            background: #252525; border-radius: 8px; margin-bottom: 10px;
+        .tracking-info { font-size: 0.75rem; color: #aaa; margin-top: 2px; font-family: monospace; }
+        .log-card {
+            background: #1a1a1a; border-radius: 12px; padding: 12px; display: flex; flex-direction: column;
         }
-        .gimbal-angle { font-size: 1.8rem; font-weight: 700; color: #4caf50; font-family: monospace; }
-        .gimbal-label { font-size: 0.7rem; color: #666; }
-        .gimbal-row { display: flex; gap: 8px; }
-        .gimbal-row > div { flex: 1; }
-        .btn {
-            display: block; width: 100%; padding: 10px; margin-top: 8px;
-            background: #333; border: none; color: #e0e0e0; border-radius: 8px;
-            cursor: pointer; font-size: 0.9rem;
-        }
-        .btn:hover { background: #444; }
-        .face-item {
-            padding: 8px 12px; background: #252525; border-radius: 8px;
-            margin-bottom: 6px; display: flex; justify-content: space-between;
-            border-left: 3px solid #4caf50;
-        }
-        .face-item.tracking { border-left-color: #ffeb3b; background: #2a2a1a; }
-        .face-item.unknown { border-left-color: #f44336; }
-        .priority-list { font-size: 0.85rem; color: #888; }
-        .priority-list span { color: #ffeb3b; font-weight: 600; }
+        .log-card h2 { font-size: 0.9rem; color: #aaa; margin-bottom: 8px; }
         .log-panel {
-            max-height: 400px; overflow-y: auto;
-            font-size: 0.75rem; font-family: monospace;
+            flex: 1; overflow-y: auto; font-size: 0.73rem; font-family: monospace;
+            max-height: 400px;
         }
-        .log-entry { padding: 3px 0; border-bottom: 1px solid #222; }
+        .log-entry { padding: 2px 0; border-bottom: 1px solid #1a1a1a; }
         .log-entry .log-time { color: #555; }
         .log-entry .log-level-ERROR { color: #f44336; font-weight: 700; }
         .log-entry .log-level-INFO { color: #4caf50; }
         .log-entry .log-level-WARN { color: #ff9800; }
         .log-entry .log-msg { color: #ccc; }
+        /* Bottom row: 4 cards */
+        .bottom-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+        .card { background: #1a1a1a; border-radius: 12px; padding: 14px; }
+        .card h2 { font-size: 0.85rem; font-weight: 600; margin-bottom: 10px; color: #aaa; }
+        /* Volume */
         .vol-btn {
-            width: 36px; height: 36px; border-radius: 50%; border: none;
-            background: #333; color: #e0e0e0; font-size: 1.2rem; cursor: pointer;
+            width: 32px; height: 32px; border-radius: 50%; border: none;
+            background: #333; color: #e0e0e0; font-size: 1.1rem; cursor: pointer;
         }
         .vol-btn:hover { background: #444; }
-        /* M2 麦克风面板 */
-        .m2-status-row { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; }
-        .m2-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+        /* M2 */
+        .m2-status-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+        .m2-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
         .m2-dot.on { background: #4ade80; box-shadow: 0 0 6px #4ade80; }
         .m2-dot.off { background: #f87171; }
         .m2-angle-display {
-            text-align: center; padding: 14px; background: #1a1a2e; border-radius: 10px;
-            margin-bottom: 8px; position: relative; overflow: hidden;
+            text-align: center; padding: 10px; background: #1a1a2e; border-radius: 8px;
+            margin-bottom: 6px; position: relative; overflow: hidden;
         }
-        .m2-angle-big { font-size: 2rem; font-weight: 700; color: #4a9eff; font-family: monospace; }
-        .m2-angle-label { font-size: 0.7rem; color: #666; margin-top: 2px; }
+        .m2-angle-big { font-size: 1.6rem; font-weight: 700; color: #4a9eff; font-family: monospace; }
+        .m2-angle-label { font-size: 0.65rem; color: #666; }
         .m2-angle-arrow {
-            position: absolute; top: 8px; right: 12px; font-size: 1.5rem;
+            position: absolute; top: 6px; right: 10px; font-size: 1.2rem;
             transition: transform 0.3s;
         }
-        .m2-event-list { max-height: 120px; overflow-y: auto; }
+        .m2-event-list { max-height: 80px; overflow-y: auto; }
         .m2-event-item {
             display: flex; justify-content: space-between; align-items: center;
-            padding: 5px 8px; margin-bottom: 3px; border-radius: 6px; background: #252525;
-            font-size: 0.8rem;
+            padding: 3px 6px; margin-bottom: 2px; border-radius: 4px; background: #252525;
+            font-size: 0.75rem;
         }
         .m2-event-time { color: #888; font-family: monospace; }
         .m2-event-angle { color: #4a9eff; font-weight: 600; }
-        @media (max-width: 768px) { .main-content { grid-template-columns: 1fr; } }
+        .conn-ok { color: #4ade80 !important; }
+        .conn-err { color: #f87171 !important; }
+        .conn-warn { color: #fbbf24 !important; }
+        /* Face */
+        .face-item {
+            padding: 6px 10px; background: #252525; border-radius: 6px;
+            margin-bottom: 4px; display: flex; justify-content: space-between;
+            border-left: 3px solid #4caf50; font-size: 0.85rem;
+        }
+        .face-item.tracking { border-left-color: #ffeb3b; background: #2a2a1a; }
+        .face-item.unknown { border-left-color: #f44336; }
+        @media (max-width: 900px) {
+            .top-row { grid-template-columns: 1fr; }
+            .bottom-row { grid-template-columns: 1fr 1fr; }
+        }
+        @media (max-width: 500px) {
+            .bottom-row { grid-template-columns: 1fr; }
+            .eye-bar { width: 70%; height: 100px; }
+        }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="eye-bar">
-            <canvas id="eyesCanvas"></canvas>
-            <div class="servo-overlay" id="servoText">pan: --°<br>tilt: --°</div>
+<div class="container">
+    <div class="eye-bar">
+        <canvas id="eyesCanvas"></canvas>
+        <div class="servo-overlay" id="servoText">pan: --°<br>tilt: --°</div>
+    </div>
+    <header>
+        <h1>🎯 人脸跟踪 + 语音对话</h1>
+        <div class="priority-list">优先级: <span>son</span> > <span>max</span> > <span>wife</span></div>
+    </header>
+
+    <!-- Top: video + logs -->
+    <div class="top-row">
+        <div class="video-panel">
+            <img id="videoStream" src="/video_feed" alt="视频流">
+            <div class="tracking-overlay">
+                <div class="tracking-target idle" id="trackingTarget">等待目标...</div>
+                <div class="tracking-info" id="trackingInfo"></div>
+            </div>
         </div>
-        <header>
-            <h1>🎯 人脸跟踪 + 语音对话</h1>
-            <div class="priority-list">
-                优先级: <span>son</span> > <span>max</span> > <span>wife</span>
-            </div>
-        </header>
-        <div class="main-content">
-            <div class="video-panel">
-                <img id="videoStream" src="/video_feed" alt="视频流">
-                <div class="tracking-overlay">
-                    <div class="tracking-target idle" id="trackingTarget">等待目标...</div>
-                    <div class="tracking-info" id="trackingInfo"></div>
-                </div>
-                <div id="xiaozhiBox" style="background:#1a1a2e;border-top:1px solid #333;padding:8px 12px;max-height:400px;overflow-y:auto;font-size:0.85em;line-height:1.5">
-                    <div style="color:#888;margin-bottom:4px">🗣️ 多多对话 <span id="xiaozhiStatus" style="font-size:0.8em">👂 监听中</span></div>
-                    <div id="xiaozhiPanel" style="color:#b0e0b0"></div>
-                </div>
-            </div>
-            <div class="sidebar">
-                <div class="card" style="padding:8px 12px">
-                    <div style="display:flex;align-items:center;gap:12px">
-                        <span style="color:#888;font-size:0.85rem">🔧 舵机</span>
-                        <span style="font-family:monospace;color:#4caf50;font-size:1.1rem" id="panAngle">0°</span>
-                        <span style="color:#555;font-size:0.7rem">Pan</span>
-                        <span style="font-family:monospace;color:#4caf50;font-size:1.1rem" id="tiltAngle">0°</span>
-                        <span style="color:#555;font-size:0.7rem">Tilt</span>
-                    </div>
-                </div>
-                <div class="card">
-                    <h2>🔊 音量</h2>
-                    <div style="display:flex;align-items:center;gap:8px">
-                        <button class="vol-btn" onclick="setVol(-10)">−</button>
-                        <div style="flex:1;background:#252525;border-radius:8px;height:24px;overflow:hidden">
-                            <div id="volBar" style="height:100%;background:#4caf50;border-radius:8px;transition:width .2s;width:50%"></div>
-                        </div>
-                        <span id="volText" style="min-width:36px;text-align:center;font-family:monospace">50%</span>
-                        <button class="vol-btn" onclick="setVol(10)">+</button>
-                    </div>
-                </div>
-                <div class="card">
-                    <h2>🎤 M2 麦克风阵列</h2>
-                    <div class="m2-status-row">
-                        <span class="m2-dot off" id="m2Dot"></span>
-                        <span id="m2ConnStatus" style="font-size:0.85rem">未连接</span>
-                        <span style="margin-left:auto;font-size:0.8rem;color:#666">💓 <span id="m2Heartbeat">0</span></span>
-                    </div>
-                    <div class="m2-angle-display" id="m2AngleBox">
-                        <div class="m2-angle-big" id="m2AngleVal">--°</div>
-                        <div class="m2-angle-label">最近唤醒角度</div>
-                        <div class="m2-angle-arrow" id="m2Arrow">⬆</div>
-                    </div>
-                    <div class="m2-event-list" id="m2EventList">
-                        <div style="color:#444;text-align:center;padding:10px;font-size:0.8rem">暂无唤醒记录</div>
-                    </div>
-                </div>
-                <div class="card">
-                    <h2>🧑 检测到的人脸</h2>
-                    <div id="faceList"></div>
-                </div>
-                <div class="card">
-                    <h2>👋 手势状态</h2>
-                    <div id="gestureStatus" style="text-align:center;padding:8px;color:#888">等待检测...</div>
-                </div>
-                <div class="card">
-                    <h2>📋 系统日志</h2>
-                    <div class="log-panel" id="logPanel"></div>
-                </div>
-            </div>
+        <div class="log-card">
+            <h2>📋 系统日志</h2>
+            <div class="log-panel" id="logPanel"></div>
         </div>
     </div>
-    <script>
-        const trackingTarget = document.getElementById('trackingTarget');
-        const trackingInfo = document.getElementById('trackingInfo');
-        const panAngle = document.getElementById('panAngle');
-        const tiltAngle = document.getElementById('tiltAngle');
-        const faceList = document.getElementById('faceList');
-        const servoText = document.getElementById('servoText');
 
-        // ===== LOOI-style Robot Eyes =====
-        const canvas = document.getElementById('eyesCanvas');
-        const ctx = canvas.getContext('2d');
-        const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-        let targetX = 0, targetY = 0, lookX = 0, lookY = 0;
-        let blinkL = 0, blinkR = 0;
-        let nextBlink = performance.now() + 2000 + Math.random() * 2000;
-        let emotion = 'normal', emotionT = 0;
-        let eSquint = 0, tSquint = 0;
-        let eWide = 0, tWide = 0;
-        let eDroop = 0, tDroop = 0;
-        let eBrowAnger = 0, tBrowAnger = 0;
+    <!-- Bottom: connections / volume / M2 / faces / gesture -->
+    <div class="bottom-row">
+        <div class="card">
+            <h2>🔗 连接状态</h2>
+            <div id="connPanel" style="font-size:0.82rem;line-height:2">
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                    <span>🤖 小智对话</span>
+                    <span id="connXiaozhi" style="color:#888">--</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                    <span>🎤 M2 麦克风</span>
+                    <span id="connM2" style="color:#888">--</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                    <span>👁️ 人脸API</span>
+                    <span id="connFaceApi" style="color:#888">--</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                    <span>📷 摄像头</span>
+                    <span id="connCamera" style="color:#888">--</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                    <span>🔧 舵机</span>
+                    <span id="connServo" style="color:#888">--</span>
+                </div>
+            </div>
+        </div>
+        <div class="card">
+            <h2>🔊 音量</h2>
+            <div style="display:flex;align-items:center;gap:6px">
+                <button class="vol-btn" onclick="setVol(-10)">−</button>
+                <div style="flex:1;background:#252525;border-radius:6px;height:20px;overflow:hidden">
+                    <div id="volBar" style="height:100%;background:#4caf50;border-radius:6px;transition:width .2s;width:50%"></div>
+                </div>
+                <span id="volText" style="min-width:32px;text-align:center;font-family:monospace;font-size:0.85rem">50%</span>
+                <button class="vol-btn" onclick="setVol(10)">+</button>
+            </div>
+            <div style="margin-top:10px;display:flex;align-items:center;gap:10px">
+                <span style="color:#888;font-size:0.8rem">🔧 舵机</span>
+                <span style="font-family:monospace;color:#4caf50" id="panAngle">0°</span>
+                <span style="color:#555;font-size:0.65rem">Pan</span>
+                <span style="font-family:monospace;color:#4caf50" id="tiltAngle">0°</span>
+                <span style="color:#555;font-size:0.65rem">Tilt</span>
+            </div>
+        </div>
+        <div class="card">
+            <h2>🎤 M2 麦克风</h2>
+            <div class="m2-status-row">
+                <span class="m2-dot off" id="m2Dot"></span>
+                <span id="m2ConnStatus" style="font-size:0.8rem">未连接</span>
+                <span style="margin-left:auto;font-size:0.75rem;color:#666">💓 <span id="m2Heartbeat">0</span></span>
+            </div>
+            <div class="m2-angle-display" id="m2AngleBox">
+                <div class="m2-angle-big" id="m2AngleVal">--°</div>
+                <div class="m2-angle-label">最近唤醒角度</div>
+                <div class="m2-angle-arrow" id="m2Arrow">⬆</div>
+            </div>
+            <div class="m2-event-list" id="m2EventList">
+                <div style="color:#444;text-align:center;padding:6px;font-size:0.75rem">暂无唤醒记录</div>
+            </div>
+        </div>
+        <div class="card">
+            <h2>🧑 人脸检测</h2>
+            <div id="faceList"><div style="color:#555;text-align:center;padding:12px;font-size:0.85rem">未检测到</div></div>
+        </div>
+        <div class="card">
+            <h2>📸 拍照</h2>
+            <div id="gestureStatus" style="text-align:center;padding:12px"><button onclick="takePhoto()" style="padding:12px 24px;background:#3b82f6;border:none;color:white;border-radius:8px;font-size:1rem;cursor:pointer">📸 拍照</button><div id="photoStatus" style="margin-top:8px;color:#888;font-size:0.8rem"></div></div>
+        </div>
+    </div>
+</div>
 
-        function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
-        function resizeEyes(){ const r=canvas.getBoundingClientRect(); canvas.width=Math.max(10,Math.floor(r.width*dpr)); canvas.height=Math.max(10,Math.floor(r.height*dpr)); }
+<script>
+const trackingTarget = document.getElementById('trackingTarget');
+const trackingInfo = document.getElementById('trackingInfo');
+const panAngle = document.getElementById('panAngle');
+const tiltAngle = document.getElementById('tiltAngle');
+const faceList = document.getElementById('faceList');
+const servoText = document.getElementById('servoText');
 
-        function setServoDirection(pan=0, tilt=0){
-            targetX = clamp((+pan || 0) / 60, -1, 1);
-            targetY = clamp(-((+tilt || 0)) / 40, -1, 1);
+// ===== LOOI-style Robot Eyes =====
+const canvas = document.getElementById('eyesCanvas');
+const ctx = canvas.getContext('2d');
+const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+let targetX = 0, targetY = 0, lookX = 0, lookY = 0;
+let blinkL = 0, blinkR = 0;
+let nextBlink = performance.now() + 2000 + Math.random() * 2000;
+let emotion = 'normal', emotionT = 0;
+let eSquint = 0, tSquint = 0;
+let eWide = 0, tWide = 0;
+let eDroop = 0, tDroop = 0;
+let eBrowAnger = 0, tBrowAnger = 0;
+
+function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+function resizeEyes(){ const r=canvas.getBoundingClientRect(); canvas.width=Math.max(10,Math.floor(r.width*dpr)); canvas.height=Math.max(10,Math.floor(r.height*dpr)); }
+
+function setServoDirection(pan=0, tilt=0){
+    targetX = clamp((+pan || 0) / 60, -1, 1);
+    targetY = clamp(-((+tilt || 0)) / 40, -1, 1);
+}
+
+function setEmotion(name, durationMs){
+    emotion = name; emotionT = performance.now() + (durationMs || 3000);
+    switch(name){
+        case 'happy':    tSquint=1; tWide=0; tDroop=0; tBrowAnger=0; break;
+        case 'sad':      tSquint=0; tWide=0; tDroop=0.5; tBrowAnger=0; break;
+        case 'surprised':tSquint=0; tWide=1; tDroop=0; tBrowAnger=0; break;
+        case 'sleepy':   tSquint=0; tWide=0; tDroop=0.8; tBrowAnger=0; break;
+        case 'angry':    tSquint=0.3; tWide=0; tDroop=0; tBrowAnger=1; break;
+        case 'love':     tSquint=0.6; tWide=0; tDroop=0; tBrowAnger=0; break;
+        case 'confused': tSquint=0; tWide=0.4; tDroop=0; tBrowAnger=0; break;
+        default:         tSquint=0; tWide=0; tDroop=0; tBrowAnger=0;
+    }
+}
+
+function drawEyes(ts){
+    const w = canvas.width, h = canvas.height;
+    lookX += (targetX - lookX) * 0.12;
+    lookY += (targetY - lookY) * 0.12;
+    if(ts > nextBlink){ blinkL = blinkR = 1; nextBlink = ts + 2200 + Math.random() * 2500; }
+    blinkL += (0 - blinkL) * 0.18;
+    blinkR += (0 - blinkR) * 0.18;
+    if(emotion !== 'normal' && ts > emotionT){ setEmotion('normal'); }
+    const S = 0.08;
+    eSquint += (tSquint - eSquint) * S;
+    eWide += (tWide - eWide) * S;
+    eDroop += (tDroop - eDroop) * S;
+    eBrowAnger += (tBrowAnger - eBrowAnger) * S;
+    ctx.clearRect(0, 0, w, h);
+    const gap = w * 0.19;
+    const cxL = w * 0.5 - gap, cxR = w * 0.5 + gap;
+    const cy = h * 0.52;
+    const R = Math.min(w * 0.14, h * 0.42, 80 * dpr);
+    const px = lookX * R * 0.55, py = lookY * R * 0.4;
+
+    function drawEye(cx, blinkVal, isLeft){
+        ctx.save();
+        const openTop = Math.max(0.05, 1 - blinkVal * 0.95 - eDroop * 0.45 - eBrowAnger * 0.2);
+        const openBot = Math.max(0.05, 1 - blinkVal * 0.95 - eSquint * 0.4);
+        const scaleY = (1 + eWide * 0.12);
+        const ex = cx + px, ey = cy + py;
+        ctx.beginPath();
+        ctx.ellipse(ex, ey, R, R * openTop * scaleY, 0, Math.PI, 0);
+        ctx.ellipse(ex, ey, R, R * openBot * scaleY, 0, 0, Math.PI);
+        ctx.closePath();
+        const g = ctx.createRadialGradient(ex - R*0.2, ey - R*0.2, R*0.05, ex, ey, R);
+        g.addColorStop(0, '#93c5fd');
+        g.addColorStop(0.5, '#3b82f6');
+        g.addColorStop(1, '#1d4ed8');
+        ctx.fillStyle = g;
+        ctx.fill();
+        ctx.beginPath(); ctx.arc(ex - R*0.22, ey - R*0.22, R*0.17, 0, Math.PI*2);
+        ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.fill();
+        ctx.beginPath(); ctx.arc(ex + R*0.15, ey + R*0.18, R*0.07, 0, Math.PI*2);
+        ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.fill();
+        if(eBrowAnger > 0.05){
+            ctx.globalAlpha = eBrowAnger;
+            ctx.strokeStyle = '#64748b'; ctx.lineWidth = R * 0.1; ctx.lineCap = 'round';
+            const by = ey - R * openTop * scaleY - R * 0.15;
+            const angle = isLeft ? 0.35 : -0.35;
+            ctx.beginPath();
+            ctx.moveTo(cx - R*0.7, by + Math.sin(angle)*R*0.35);
+            ctx.lineTo(cx + R*0.7, by - Math.sin(angle)*R*0.35);
+            ctx.stroke();
+            ctx.globalAlpha = 1;
+        }
+        ctx.restore();
+        if(emotion === 'love' && eSquint > 0.3){
+            ctx.save(); ctx.globalAlpha = eSquint * 0.7;
+            ctx.fillStyle = '#f472b6';
+            ctx.font = `${R*0.4}px serif`;
+            ctx.fillText('♥', cx + R*0.8, cy - R*0.6);
+            ctx.restore();
+        }
+    }
+    drawEye(cxL, blinkL, true);
+    drawEye(cxR, blinkR, false);
+    requestAnimationFrame(drawEyes);
+}
+
+window.setServoDirection = setServoDirection;
+window.setEmotion = setEmotion;
+window.addEventListener('resize', resizeEyes);
+resizeEyes(); requestAnimationFrame(drawEyes);
+
+// ===== Status polling =====
+async function pollStatus() {
+    try {
+        const r = await fetch('/api/status?t=' + Date.now(), {cache:'no-store'});
+        const d = await r.json();
+        if (d.tracking) {
+            trackingTarget.className = 'tracking-target active';
+            trackingTarget.textContent = '🎯 ' + d.tracking;
+            trackingInfo.textContent = '置信度: ' + (d.confidence*100).toFixed(1) + '%';
+        } else {
+            trackingTarget.className = 'tracking-target idle';
+            trackingTarget.textContent = '搜索中...';
+            trackingInfo.textContent = '';
         }
 
-        function setEmotion(name, durationMs){
-            emotion = name; emotionT = performance.now() + (durationMs || 3000);
-            switch(name){
-                case 'happy':    tSquint=1; tWide=0; tDroop=0; tBrowAnger=0; break;
-                case 'sad':      tSquint=0; tWide=0; tDroop=0.5; tBrowAnger=0; break;
-                case 'surprised':tSquint=0; tWide=1; tDroop=0; tBrowAnger=0; break;
-                case 'sleepy':   tSquint=0; tWide=0; tDroop=0.8; tBrowAnger=0; break;
-                case 'angry':    tSquint=0.3; tWide=0; tDroop=0; tBrowAnger=1; break;
-                case 'love':     tSquint=0.6; tWide=0; tDroop=0; tBrowAnger=0; break;
-                case 'confused': tSquint=0; tWide=0.4; tDroop=0; tBrowAnger=0; break;
-                default:         tSquint=0; tWide=0; tDroop=0; tBrowAnger=0;
+        const pan = (typeof d.pan === 'number') ? d.pan : 0;
+        const tilt = (typeof d.tilt === 'number') ? d.tilt : 0;
+        panAngle.textContent = pan + '°';
+        tiltAngle.textContent = tilt + '°';
+        servoText.innerHTML = 'pan: ' + Number(pan).toFixed(1) + '°<br>tilt: ' + Number(tilt).toFixed(1) + '°';
+        setServoDirection(pan, tilt);
+        const faces = d.faces || [];
+        const known = faces.filter(f => f.name !== 'unknown');
+        if (faces.length === 0 && emotion === 'normal') setEmotion('sleepy', 2000);
+        else if (known.length > 0 && emotion === 'normal') setEmotion('happy', 1500);
+
+        if (faces.length === 0) {
+            faceList.innerHTML = '<div style="color:#555;text-align:center;padding:12px;font-size:0.85rem">未检测到</div>';
+        } else {
+            faceList.innerHTML = faces.map(f => {
+                const cls = f.name === d.tracking ? 'face-item tracking' :
+                            f.name === 'unknown' ? 'face-item unknown' : 'face-item';
+                return '<div class="' + cls + '"><span>' + (f.name === d.tracking ? '🎯 ' : '') + f.name + '</span><span style="color:#888">' + (f.confidence*100).toFixed(1) + '%</span></div>';
+            }).join('');
+        }
+    } catch(e) {}
+}
+
+// ===== M2 =====
+let m2LastEventCount = 0;
+async function pollM2() {
+    try {
+        const r = await fetch('/api/m2/state?t=' + Date.now(), {cache:'no-store'});
+        const s = await r.json();
+        const dot = document.getElementById('m2Dot');
+        const connText = document.getElementById('m2ConnStatus');
+        if (s.connected) { dot.className = 'm2-dot on'; connText.textContent = '已连接'; connText.style.color = '#4ade80'; }
+        else { dot.className = 'm2-dot off'; connText.textContent = '未连接'; connText.style.color = '#f87171'; }
+        document.getElementById('m2Heartbeat').textContent = s.heartbeat;
+        const angleBox = document.getElementById('m2AngleBox');
+        const angleVal = document.getElementById('m2AngleVal');
+        const arrow = document.getElementById('m2Arrow');
+        if (s.last_wake) {
+            angleVal.textContent = s.last_wake.angle + '°';
+            arrow.style.transform = 'rotate(' + s.last_wake.angle + 'deg)';
+            if (s.events.length > m2LastEventCount) {
+                angleBox.style.borderColor = '#4a9eff';
+                angleBox.style.boxShadow = '0 0 20px rgba(74,158,255,0.4)';
+                setTimeout(() => { angleBox.style.borderColor = 'transparent'; angleBox.style.boxShadow = 'none'; }, 1500);
             }
+        } else { angleVal.textContent = '--°'; }
+        m2LastEventCount = s.events.length;
+        const list = document.getElementById('m2EventList');
+        if (s.events.length > 0) {
+            list.innerHTML = s.events.slice().reverse().slice(0, 8).map((e, i) => {
+                const idx = s.events.length - i;
+                return '<div class="m2-event-item"><span style="color:#555;font-size:0.7rem">#' + idx + '</span><span class="m2-event-time">' + e.time + '</span><span class="m2-event-angle">' + e.angle + '°</span></div>';
+            }).join('');
         }
+    } catch(e) {}
+}
 
-        function drawEyes(ts){
-            const w = canvas.width, h = canvas.height;
-            lookX += (targetX - lookX) * 0.12;
-            lookY += (targetY - lookY) * 0.12;
-            if(ts > nextBlink){ blinkL = blinkR = 1; nextBlink = ts + 2200 + Math.random() * 2500; }
-            blinkL += (0 - blinkL) * 0.18;
-            blinkR += (0 - blinkR) * 0.18;
-            if(emotion !== 'normal' && ts > emotionT){ setEmotion('normal'); }
-            const S = 0.08;
-            eSquint += (tSquint - eSquint) * S;
-            eWide += (tWide - eWide) * S;
-            eDroop += (tDroop - eDroop) * S;
-            eBrowAnger += (tBrowAnger - eBrowAnger) * S;
-            ctx.clearRect(0, 0, w, h);
-            const gap = w * 0.19;
-            const cxL = w * 0.5 - gap, cxR = w * 0.5 + gap;
-            const cy = h * 0.52;
-            const R = Math.min(w * 0.14, h * 0.42, 80 * dpr);
-            const px = lookX * R * 0.55, py = lookY * R * 0.4;
+// ===== Volume =====
+let currentVol = 50;
+async function fetchVol() {
+    try { const r = await fetch('/api/volume'); const d = await r.json(); if (d.volume >= 0) { currentVol = d.volume; updateVolUI(); } } catch(e) {}
+}
+function updateVolUI() {
+    document.getElementById('volBar').style.width = currentVol + '%';
+    document.getElementById('volText').textContent = currentVol + '%';
+}
+async function setVol(delta) {
+    currentVol = Math.max(0, Math.min(100, currentVol + delta));
+    updateVolUI();
+    await fetch('/api/volume', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({volume:currentVol})});
+}
 
-            function drawEye(cx, blinkVal, isLeft){
-                ctx.save();
-                const openTop = Math.max(0.05, 1 - blinkVal * 0.95 - eDroop * 0.45 - eBrowAnger * 0.2);
-                const openBot = Math.max(0.05, 1 - blinkVal * 0.95 - eSquint * 0.4);
-                const scaleY = (1 + eWide * 0.12);
-                const ex = cx + px, ey = cy + py;
-                ctx.beginPath();
-                ctx.ellipse(ex, ey, R, R * openTop * scaleY, 0, Math.PI, 0);
-                ctx.ellipse(ex, ey, R, R * openBot * scaleY, 0, 0, Math.PI);
-                ctx.closePath();
-                const g = ctx.createRadialGradient(ex - R*0.2, ey - R*0.2, R*0.05, ex, ey, R);
-                g.addColorStop(0, '#93c5fd');
-                g.addColorStop(0.5, '#3b82f6');
-                g.addColorStop(1, '#1d4ed8');
-                ctx.fillStyle = g;
-                ctx.fill();
-                ctx.beginPath(); ctx.arc(ex - R*0.22, ey - R*0.22, R*0.17, 0, Math.PI*2);
-                ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.fill();
-                ctx.beginPath(); ctx.arc(ex + R*0.15, ey + R*0.18, R*0.07, 0, Math.PI*2);
-                ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.fill();
-                if(eBrowAnger > 0.05){
-                    ctx.globalAlpha = eBrowAnger;
-                    ctx.strokeStyle = '#64748b'; ctx.lineWidth = R * 0.1; ctx.lineCap = 'round';
-                    const by = ey - R * openTop * scaleY - R * 0.15;
-                    const angle = isLeft ? 0.35 : -0.35;
-                    ctx.beginPath();
-                    ctx.moveTo(cx - R*0.7, by + Math.sin(angle)*R*0.35);
-                    ctx.lineTo(cx + R*0.7, by - Math.sin(angle)*R*0.35);
-                    ctx.stroke();
-                    ctx.globalAlpha = 1;
-                }
-                ctx.restore();
-                if(emotion === 'love' && eSquint > 0.3){
-                    ctx.save(); ctx.globalAlpha = eSquint * 0.7;
-                    ctx.fillStyle = '#f472b6';
-                    ctx.font = `${R*0.4}px serif`;
-                    ctx.fillText('♥', cx + R*0.8, cy - R*0.6);
-                    ctx.restore();
-                }
-            }
-            drawEye(cxL, blinkL, true);
-            drawEye(cxR, blinkR, false);
-            requestAnimationFrame(drawEyes);
-        }
+// ===== Logs =====
+const logPanel = document.getElementById('logPanel');
+async function pollLogs() {
+    try {
+        const r = await fetch('/api/logs?t=' + Date.now(), {cache:'no-store'});
+        const logs = await r.json();
+        logPanel.innerHTML = logs.map(l =>
+            '<div class="log-entry"><span class="log-time">' + l.time + '</span> <span class="log-level-' + l.level + '">[' + l.level + ']</span> <span class="log-msg">' + l.msg + '</span></div>'
+        ).join('');
+    } catch(e) {}
+}
 
-        window.setServoDirection = setServoDirection;
-        window.setEmotion = setEmotion;
-        window.addEventListener('resize', resizeEyes);
-        resizeEyes(); requestAnimationFrame(drawEyes);
+// ===== Connections =====
+async function pollConnections() {
+    try {
+        // xiaozhi
+        const xr = await fetch('/api/xiaozhi/status?t=' + Date.now(), {cache:'no-store'});
+        const xs = await xr.json();
+        const xe = document.getElementById('connXiaozhi');
+        if (xs.connected) {
+            const state = xs.speaking ? '🔊 说话中' : xs.listening ? '🎙️ 录音中' : '✅ 在线';
+            xe.textContent = state; xe.className = 'conn-ok';
+        } else { xe.textContent = '❌ 断开'; xe.className = 'conn-err'; }
 
-        // ===== Status polling =====
-        async function pollStatus() {
-            try {
-                const r = await fetch('/api/status?t=' + Date.now(), {cache:'no-store'});
-                const d = await r.json();
-                if (d.tracking) {
-                    trackingTarget.className = 'tracking-target active';
-                    trackingTarget.textContent = `🎯 ${d.tracking}`;
-                    trackingInfo.textContent = `置信度: ${(d.confidence*100).toFixed(1)}%`;
-                } else {
-                    trackingTarget.className = 'tracking-target idle';
-                    trackingTarget.textContent = '搜索中...';
-                    trackingInfo.textContent = '';
-                }
-                const gs = d.gesture || {};
-                const gestureEl = document.getElementById('gestureStatus');
-                if (gs.wave_detected) {
-                    gestureEl.innerHTML = '<span style="font-size:1.5rem">👋</span> 挥手检测到！';
-                    gestureEl.style.color = '#ffeb3b';
-                } else if (gs.hands_count > 0) {
-                    const g = gs.gesture || 'unknown';
-                    const text = g === 'open_palm' ? '🖐️ 手掌张开' : (g === 'fist' ? '✊ 握拳' : `✋ ${g}`);
-                    gestureEl.innerHTML = `${text} (${gs.hands_count}只手)`;
-                    gestureEl.style.color = (g === 'open_palm') ? '#00e676' : '#4caf50';
-                } else {
-                    gestureEl.innerHTML = '未检测到手';
-                    gestureEl.style.color = '#555';
-                }
-                const pan = (typeof d.pan === 'number') ? d.pan : 0;
-                const tilt = (typeof d.tilt === 'number') ? d.tilt : 0;
-                panAngle.textContent = `${pan}°`;
-                tiltAngle.textContent = `${tilt}°`;
-                servoText.innerHTML = `pan: ${Number(pan).toFixed(1)}°<br>tilt: ${Number(tilt).toFixed(1)}°`;
-                setServoDirection(pan, tilt);
-                const faces = d.faces || [];
-                const known = faces.filter(f => f.name !== 'unknown');
-                if (faces.length === 0 && emotion === 'normal') setEmotion('sleepy', 2000);
-                else if (known.length > 0 && emotion === 'normal') setEmotion('happy', 1500);
-                if ((d.gesture||{}).wave_detected) setEmotion('surprised', 2000);
-                else if ((d.gesture||{}).gesture === 'open_palm' && emotion === 'normal') setEmotion('love', 2500);
+        // m2
+        const mr = await fetch('/api/m2/state?t=' + Date.now(), {cache:'no-store'});
+        const ms = await mr.json();
+        const me = document.getElementById('connM2');
+        if (ms.connected) { me.textContent = '✅ 在线 (💓' + ms.heartbeat + ')'; me.className = 'conn-ok'; }
+        else { me.textContent = '❌ 断开'; me.className = 'conn-err'; }
 
-                if (faces.length === 0) {
-                    faceList.innerHTML = '<div style="color:#555;text-align:center;padding:16px">未检测到人脸</div>';
-                } else {
-                    faceList.innerHTML = faces.map(f => {
-                        const cls = f.name === d.tracking ? 'face-item tracking' :
-                                    f.name === 'unknown' ? 'face-item unknown' : 'face-item';
-                        return `<div class="${cls}">
-                            <span>${f.name === d.tracking ? '🎯 ' : ''}${f.name}</span>
-                            <span style="color:#888">${(f.confidence*100).toFixed(1)}%</span>
-                        </div>`;
-                    }).join('');
-                }
-            } catch(e) {}
-        }
+        // face api + camera + servo from /api/status
+        const sr = await fetch('/api/status?t=' + Date.now(), {cache:'no-store'});
+        const ss = await sr.json();
 
-        // ===== M2 麦克风阵列 =====
-        let m2LastEventCount = 0;
-        async function pollM2() {
-            try {
-                const r = await fetch('/api/m2/state?t=' + Date.now(), {cache:'no-store'});
-                const s = await r.json();
-                const dot = document.getElementById('m2Dot');
-                const connText = document.getElementById('m2ConnStatus');
-                if (s.connected) {
-                    dot.className = 'm2-dot on';
-                    connText.textContent = '已连接';
-                    connText.style.color = '#4ade80';
-                } else {
-                    dot.className = 'm2-dot off';
-                    connText.textContent = '未连接';
-                    connText.style.color = '#f87171';
-                }
-                document.getElementById('m2Heartbeat').textContent = s.heartbeat;
+        const fe = document.getElementById('connFaceApi');
+        if (ss.api_ok > 0 && ss.api_err === 0) { fe.textContent = '✅ 正常'; fe.className = 'conn-ok'; }
+        else if (ss.api_ok > 0) { fe.textContent = '⚠️ ' + ss.api_err + '次超时'; fe.className = 'conn-warn'; }
+        else { fe.textContent = '❌ 不可用'; fe.className = 'conn-err'; }
 
-                // 角度显示
-                const angleBox = document.getElementById('m2AngleBox');
-                const angleVal = document.getElementById('m2AngleVal');
-                const arrow = document.getElementById('m2Arrow');
-                if (s.last_wake) {
-                    const a = s.last_wake.angle;
-                    angleVal.textContent = a + '°';
-                    arrow.style.transform = `rotate(${a}deg)`;
-                    // 新唤醒闪烁效果
-                    if (s.events.length > m2LastEventCount) {
-                        angleBox.style.borderColor = '#4a9eff';
-                        angleBox.style.boxShadow = '0 0 20px rgba(74,158,255,0.4)';
-                        setTimeout(() => {
-                            angleBox.style.borderColor = 'transparent';
-                            angleBox.style.boxShadow = 'none';
-                        }, 1500);
-                    }
-                } else {
-                    angleVal.textContent = '--°';
-                }
-                m2LastEventCount = s.events.length;
+        const ce = document.getElementById('connCamera');
+        if (ss.frame_count > 0) { ce.textContent = '✅ ' + (ss.camera_fps || '--') + ' FPS'; ce.className = 'conn-ok'; }
+        else { ce.textContent = '😴 休眠'; ce.className = 'conn-warn'; }
 
-                // 事件列表
-                const list = document.getElementById('m2EventList');
-                if (s.events.length > 0) {
-                    list.innerHTML = s.events.slice().reverse().slice(0, 10).map((e, i) => {
-                        const idx = s.events.length - i;
-                        return `<div class="m2-event-item">
-                            <span style="color:#555;font-size:0.75rem">#${idx}</span>
-                            <span class="m2-event-time">${e.time}</span>
-                            <span class="m2-event-angle">角度 ${e.angle}°</span>
-                        </div>`;
-                    }).join('');
-                }
-            } catch(e) {}
-        }
+        const se = document.getElementById('connServo');
+        if (typeof ss.pan === 'number') { se.textContent = '✅ 已连接'; se.className = 'conn-ok'; }
+        else { se.textContent = '❌ 断开'; se.className = 'conn-err'; }
+    } catch(e) {
+        document.getElementById('connXiaozhi').textContent = '⚠️ 请求失败';
+    }
+}
 
-        // ===== Gimbal / Volume =====
-        async function gimbalCenter() { await fetch('/api/gimbal/center', {method:'POST'}); }
-        async function gimbalCalibrate() { await fetch('/api/gimbal/calibrate', {method:'POST'}); }
+// ===== Photo =====
+async function takePhoto() {
+    const btn = document.querySelector("#gestureStatus button");
+    const status = document.getElementById("photoStatus");
+    btn.disabled = true; btn.textContent = "📸 拍照中...";
+    try {
+        const r = await fetch("/api/photo", {method:"POST"});
+        const d = await r.json();
+        if (d.ok) { status.textContent = "✅ 已保存并发送"; status.style.color = "#4ade80"; }
+        else { status.textContent = "❌ " + (d.error || "失败"); status.style.color = "#f87171"; }
+    } catch(e) { status.textContent = "❌ 请求失败"; status.style.color = "#f87171"; }
+    btn.disabled = false; btn.textContent = "📸 拍照";
+    setTimeout(() => { status.textContent = ""; }, 5000);
+}
 
-        let currentVol = 50;
-        async function fetchVol() {
-            try {
-                const r = await fetch('/api/volume');
-                const d = await r.json();
-                if (d.volume >= 0) { currentVol = d.volume; updateVolUI(); }
-            } catch(e) {}
-        }
-        function updateVolUI() {
-            document.getElementById('volBar').style.width = currentVol + '%';
-            document.getElementById('volText').textContent = currentVol + '%';
-        }
-        async function setVol(delta) {
-            currentVol = Math.max(0, Math.min(100, currentVol + delta));
-            updateVolUI();
-            await fetch('/api/volume', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({volume:currentVol})});
-        }
-
-        // ===== Logs =====
-        const logPanel = document.getElementById('logPanel');
-        async function pollLogs() {
-            try {
-                const r = await fetch('/api/logs?t=' + Date.now(), {cache:'no-store'});
-                const logs = await r.json();
-                logPanel.innerHTML = logs.map(l =>
-                    `<div class="log-entry"><span class="log-time">${l.time}</span> <span class="log-level-${l.level}">[${l.level}]</span> <span class="log-msg">${l.msg}</span></div>`
-                ).join('');
-            } catch(e) {}
-        }
-
-        // ===== 多多对话日志 =====
-        const xiaozhiPanel = document.getElementById('xiaozhiPanel');
-        async function pollXiaozhi() {
-            try {
-                const r = await fetch('/api/xiaozhi/logs?t=' + Date.now(), {cache:'no-store'});
-                const d = await r.json();
-                const shown = d.lines.filter(l => !l.includes('[debug]'));
-                xiaozhiPanel.innerHTML = shown.map(l => {
-                    let cls = '';
-                    if (l.includes('唤醒') || l.includes('🎯')) cls = 'color:#ffeb3b';
-                    else if (l.includes('ERROR') || l.includes('断')) cls = 'color:#f44336';
-                    else if (l.includes('asr') || l.includes('🎤')) cls = 'color:#90caf9';
-                    else if (l.includes('🤖') || l.includes('💬')) cls = 'color:#a5d6a7';
-                    return `<div style="${cls}">${l.replace(/</g,'&lt;')}</div>`;
-                }).join('');
-                xiaozhiPanel.scrollTop = xiaozhiPanel.scrollHeight;
-                const last = shown[shown.length - 1] || '';
-                const st = document.getElementById('xiaozhiStatus');
-                if (last.includes('监听') || last.includes('继续监听')) st.textContent = '👂 监听中';
-                else if (last.includes('唤醒') || last.includes('录音') || last.includes('开始说话')) st.textContent = '🎙️ 对话中';
-                else if (last.includes('停止') || last.includes('说话结束')) st.textContent = '✅ 完成';
-            } catch(e) {}
-        }
-
-        // ===== Start =====
-        setInterval(pollStatus, 800);
-        setInterval(pollLogs, 2000);
-        setInterval(pollXiaozhi, 2000);
-        setInterval(pollM2, 1000);
-        pollStatus(); pollLogs(); pollXiaozhi(); pollM2(); fetchVol();
-
-        document.getElementById('videoStream').onerror = function() {
-            setTimeout(() => { this.src = '/video_feed?' + Date.now(); }, 2000);
-        };
-    </script>
+// ===== Start =====
+setInterval(pollStatus, 800);
+setInterval(pollLogs, 1500);
+setInterval(pollM2, 1000);
+pollStatus(); pollLogs(); pollM2(); fetchVol(); pollConnections();
+setInterval(pollConnections, 3000);
+document.getElementById('videoStream').onerror = function() {
+    setTimeout(() => { this.src = '/video_feed?' + Date.now(); }, 2000);
+};
+</script>
 </body>
 </html>
