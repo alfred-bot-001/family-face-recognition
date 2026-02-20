@@ -9,10 +9,15 @@ import subprocess
 import threading
 import time
 
+import sys
+sys.path.insert(0, "/home/ws/workspace-agent/projects/ugv-remote")
+
 import cv2
 import numpy as np
 import requests
-import serial
+import serial  # still needed for M2 mic serial port
+from camera_hub import CameraClient
+from robot_hub import get_hub, MODE_AI_AUTO, MODE_VOICE
 
 # ============================================================
 #  配置
@@ -57,7 +62,7 @@ SAMPLE_RATE = 16000
 CHANNELS = 1
 FRAME_DURATION_MS = 60
 FRAME_SIZE = SAMPLE_RATE * FRAME_DURATION_MS // 1000  # 960
-AUDIO_PLAY = "plughw:2,0"   # USB PnP Audio Device 扬声器
+AUDIO_PLAY = "plughw:3,0"   # USB PnP Audio Device 扬声器
 AUDIO_REC = "plughw:5,0"    # M2 麦克风阵列录音
 WAKE_WORD = "多多"
 M2_SERIAL_PORT = "/dev/m2_mic"
@@ -78,6 +83,105 @@ TELEGRAM_CHAT_ID = "7929939096"
 
 SHERPA_ASR_DIR = os.path.join(os.path.dirname(__file__), "models",
                               "sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16", "96")
+
+# ============================================================
+#  语音移动控制配置
+# ============================================================
+MOVE_SPEED = 0.6        # 默认移动速度 (0~1.3)
+MOVE_DURATION = 1.5     # 默认移动时长(秒)
+TURN_SPEED = 0.5        # 默认转弯速度
+TURN_DURATION = 0.8     # 默认转弯时长(秒)
+
+# 移动关键词 — 客户端 STT 直接匹配（不走服务端IoT）
+_MOVE_FORWARD_KW = ['往前', '前进', '向前', '前走', '往前走', '前面走']
+_MOVE_BACKWARD_KW = ['往后', '后退', '向后', '后面走', '往后走', '退后']
+_TURN_LEFT_KW = ['左转', '向左', '往左', '左边转']
+_TURN_RIGHT_KW = ['右转', '向右', '往右', '右边转']
+_MOVE_STOP_KW = ['停', '别动', '站住', '别走', '停下']
+_SPIN_KW = ['转圈', '转个圈', '转圈圈', '原地转', '旋转', '转一圈']
+
+# 电量报警
+BATTERY_LOW_VOLTAGE = 11.0       # 低电量阈值(V)
+BATTERY_WARN_COOLDOWN = 300      # 报警冷却(秒)，5分钟一次
+BATTERY_CHECK_INTERVAL = 30      # 检查间隔(秒)
+
+# 聊天记录备份
+CHAT_LOG_DIR = os.path.expanduser("~/workspace-agent/projects/family-face-recognition/doc")
+
+def _detect_move_intent(text):
+    """从 STT 文本中检测移动意图，返回 (method, params) 或 None"""
+    for kw in _MOVE_STOP_KW:
+        if kw in text:
+            return ("stop", {})
+    for kw in _SPIN_KW:
+        if kw in text:
+            return ("spin", {})
+    for kw in _MOVE_FORWARD_KW:
+        if kw in text:
+            return ("forward", {})
+    for kw in _MOVE_BACKWARD_KW:
+        if kw in text:
+            return ("backward", {})
+    for kw in _TURN_LEFT_KW:
+        if kw in text:
+            return ("turn_left", {})
+    for kw in _TURN_RIGHT_KW:
+        if kw in text:
+            return ("turn_right", {})
+    return None
+
+_UNUSED_IOT_DESCRIPTOR = {
+    "name": "RobotMove",
+    "description": "控制机器人移动，可以前进、后退、左转、右转、停止",
+    "properties": {
+        "is_moving": {
+            "description": "机器人是否正在移动",
+            "type": "boolean",
+        }
+    },
+    "methods": {
+        "forward": {
+            "description": "向前移动",
+            "parameters": {
+                "duration": {
+                    "description": "移动时长(秒)，默认1.5",
+                    "type": "number",
+                },
+            },
+        },
+        "backward": {
+            "description": "向后移动",
+            "parameters": {
+                "duration": {
+                    "description": "移动时长(秒)，默认1.5",
+                    "type": "number",
+                },
+            },
+        },
+        "turn_left": {
+            "description": "向左转",
+            "parameters": {
+                "duration": {
+                    "description": "转弯时长(秒)，默认0.8",
+                    "type": "number",
+                },
+            },
+        },
+        "turn_right": {
+            "description": "向右转",
+            "parameters": {
+                "duration": {
+                    "description": "转弯时长(秒)，默认0.8",
+                    "type": "number",
+                },
+            },
+        },
+        "stop": {
+            "description": "立即停止移动",
+            "parameters": {},
+        },
+    },
+}
 
 import logging
 from emotions import play_emotion_from_text, play_emotion
@@ -105,6 +209,21 @@ def add_log(level: str, msg: str):
     entry = {"time": ts, "level": level, "msg": msg}
     log_buffer.appendleft(entry)
     log.info(f"[{level}] {msg}")
+
+
+def _save_chat(role: str, text: str):
+    """保存聊天记录到按日期分的文件"""
+    if not text or not text.strip():
+        return
+    try:
+        os.makedirs(CHAT_LOG_DIR, exist_ok=True)
+        today = time.strftime("%Y-%m-%d")
+        filepath = os.path.join(CHAT_LOG_DIR, f"chat_{today}.md")
+        ts = time.strftime("%H:%M:%S")
+        with open(filepath, "a", encoding="utf-8") as f:
+            f.write(f"[{ts}] **{role}**: {text.strip()}\n")
+    except Exception as e:
+        log.error(f"聊天备份失败: {e}")
 
 
 # ============================================================
@@ -303,7 +422,7 @@ class M2WakeWordListener:
                     now = time.time()
                     if now - self._last_detect > self._cooldown:
                         self._last_detect = now
-                        on_wake()
+                        on_wake(angle)
 
             except Exception as e:
                 err_str = str(e)
@@ -505,6 +624,128 @@ def _vision_describe(prompt: str = "请用简短的中文描述你看到的画�
         return "识别出了点问题，稍后再试。"
 
 
+# ============================================================
+#  电量监控
+# ============================================================
+class BatteryMonitor:
+    """定期读取电池电压，低电量时在看到人脸时语音提醒"""
+
+    def __init__(self):
+        self.voltage = 0.0
+        self.is_low = False
+        self._last_warn_time = 0
+        self._hub = get_hub()
+        self._running = True
+        threading.Thread(target=self._monitor_loop, daemon=True).start()
+        log.info("[电量] 电量监控已启动")
+
+    def _monitor_loop(self):
+        """后台读串口获取电压"""
+        while self._running:
+            try:
+                status = self._hub.get_status()
+                bd = status.get("base_data")
+                if bd and "v" in bd:
+                    self.voltage = bd["v"]
+                    self.is_low = self.voltage < BATTERY_LOW_VOLTAGE and self.voltage > 5.0
+                    if self.is_low:
+                        add_log("WARN", f"🔋 低电量: {self.voltage:.1f}V")
+            except Exception:
+                pass
+            time.sleep(BATTERY_CHECK_INTERVAL)
+
+    def should_warn(self) -> bool:
+        """是否应该发出低电量警告"""
+        if not self.is_low:
+            return False
+        now = time.time()
+        if now - self._last_warn_time < BATTERY_WARN_COOLDOWN:
+            return False
+        return True
+
+    def mark_warned(self):
+        self._last_warn_time = time.time()
+
+    def stop(self):
+        self._running = False
+
+
+_battery_monitor: BatteryMonitor = None
+
+
+# ============================================================
+#  移动执行器
+# ============================================================
+class MovementController:
+    """处理 IoT 移动命令，通过 robot_hub 控制电机"""
+
+    def __init__(self, gimbal):
+        self.gimbal = gimbal
+        self.hub = get_hub()
+        self._moving = False
+        self._stop_event = threading.Event()
+
+    @property
+    def is_moving(self):
+        return self._moving
+
+    def execute(self, method: str, params: dict):
+        """执行移动命令（在后台线程）"""
+        add_log("INFO", f"🚗 移动: {method} params={params}")
+        # 请求 VOICE 控制权（高于 AI_AUTO）
+        self.hub.request_control(MODE_VOICE)
+        self._stop_event.clear()
+
+        if method == "stop":
+            self._do_stop()
+            return
+
+        threading.Thread(
+            target=self._do_move, args=(method, params), daemon=True
+        ).start()
+
+    def _do_move(self, method: str, params: dict):
+        self._moving = True
+        try:
+            if method == "forward":
+                duration = float(params.get("duration", MOVE_DURATION))
+                self.hub.move(MOVE_SPEED, MOVE_SPEED, source=MODE_VOICE)
+            elif method == "backward":
+                duration = float(params.get("duration", MOVE_DURATION))
+                self.hub.move(-MOVE_SPEED, -MOVE_SPEED, source=MODE_VOICE)
+            elif method == "turn_left":
+                duration = float(params.get("duration", TURN_DURATION))
+                self.hub.move(-TURN_SPEED, TURN_SPEED, source=MODE_VOICE)
+            elif method == "turn_right":
+                duration = float(params.get("duration", TURN_DURATION))
+                self.hub.move(TURN_SPEED, -TURN_SPEED, source=MODE_VOICE)
+            elif method == "spin":
+                duration = float(params.get("duration", 3.0))
+                self.hub.move(TURN_SPEED, -TURN_SPEED, source=MODE_VOICE)
+            else:
+                add_log("WARN", f"🚗 未知移动方法: {method}")
+                self._moving = False
+                return
+
+            # 等待指定时长或被打断
+            self._stop_event.wait(timeout=max(0.1, min(duration, 10.0)))
+        except Exception as e:
+            add_log("ERROR", f"🚗 移动错误: {e}")
+        finally:
+            self._do_stop()
+
+    def _do_stop(self):
+        self._stop_event.set()
+        self.hub.move(0, 0, source=MODE_VOICE)
+        self._moving = False
+        # 释放控制权回 AI_AUTO
+        self.hub.release_control(MODE_VOICE)
+        add_log("INFO", "🚗 移动停止")
+
+
+_movement_ctrl: MovementController = None
+
+
 class XiaozhiClient:
     def __init__(self, ws_url: str, device_id: str, gimbal=None):
         self.ws_url = ws_url
@@ -561,6 +802,7 @@ class XiaozhiClient:
         except Exception as e:
             log.error(f"多多握手失败: {e}")
             return False
+
         return True
 
     async def _keepalive(self):
@@ -620,6 +862,7 @@ class XiaozhiClient:
             elif state == "sentence_start":
                 text = msg.get('text', '')
                 add_log("INFO", f"💬 {text}")
+                _save_chat("多多", text)
                 # 情绪动作（检测 LLM 回复文本触发）
                 if self.gimbal and getattr(self.gimbal, 'connected', False):
                     play_emotion_from_text(self.gimbal, text)
@@ -644,6 +887,8 @@ class XiaozhiClient:
             # 跳过自己发的detect消息回显（时间窗口内忽略）
             if time.time() < self._stt_ignore_until:
                 return
+            # 备份用户语音
+            _save_chat("用户", stt_text)
             # 用户说了休息相关的话 → 直接打断并假睡
             _sleep_kw = ['你休息', '去休息', '去睡', '你睡', '关机', '待机', '休眠']
             if any(kw in stt_text for kw in _sleep_kw):
@@ -658,6 +903,13 @@ class XiaozhiClient:
                 add_log("INFO", "📸 触发拍照...")
                 self._mute = True
                 asyncio.ensure_future(self._do_take_photo())
+            # 移动: 用户说移动关键词 → 打断LLM + 执行移动
+            move_intent = _detect_move_intent(stt_text)
+            if move_intent and _movement_ctrl:
+                method, params = move_intent
+                add_log("INFO", f"🚗 语音移动: {method}")
+                self._mute = True
+                asyncio.ensure_future(self._do_move_command(method, params))
         elif t == "llm":
             add_log("INFO", f"🤖 {msg.get('text', '')}")
         elif t == "hello":
@@ -726,6 +978,59 @@ class XiaozhiClient:
 
         # 5. 后台拍照+发送
         threading.Thread(target=self._take_photo_work, daemon=True).start()
+
+    async def _do_move_command(self, method: str, params: dict):
+        """打断 → 本地TTS说动作语 → 执行移动（不经过服务端LLM）"""
+        # 1. 打断服务端，丢弃所有残余音频
+        self._mute = True
+        try:
+            abort = {"session_id": self.session_id, "type": "abort", "reason": "move"}
+            await self.ws.send(json.dumps(abort))
+        except Exception:
+            pass
+
+        # 2. 停止播放
+        self.is_speaking = False
+        if self._play_proc:
+            try: self._play_proc.stdin.close()
+            except Exception: pass
+            try: self._play_proc.kill(); self._play_proc.wait(timeout=1)
+            except Exception: pass
+            self._play_proc = None
+
+        # 3. 停止录音（防止自己的TTS被录进去）
+        if self.is_listening:
+            self._stop_recording()
+            if self._send_task:
+                self._send_task.cancel()
+            try:
+                stop = {"session_id": self.session_id, "type": "listen", "state": "stop"}
+                await self.ws.send(json.dumps(stop))
+            except Exception:
+                pass
+
+        await asyncio.sleep(0.2)
+
+        # 4. 本地 edge-tts 说动作语 + 同时执行移动（不走服务端LLM）
+        action_words = {
+            "forward": "冲啊！往前走喽！",
+            "backward": "倒车请注意！",
+            "turn_left": "向左转！",
+            "turn_right": "向右转！",
+            "stop": "刹车！停下来！",
+            "spin": "转圈圈喽！",
+        }
+        word = action_words.get(method, "收到！")
+        self._stt_ignore_until = time.time() + 5
+
+        # 后台线程：本地TTS + 执行移动
+        def _do_move_work():
+            edge_tts_speak(word, voice="zh-CN-YunxiaNeural")
+            # TTS 播完后解除静音
+            self._mute = False
+
+        threading.Thread(target=_do_move_work, daemon=True).start()
+        _movement_ctrl.execute(method, params)
 
     def _take_photo_work(self):
         """后台：抓帧保存+发Telegram"""
@@ -866,12 +1171,12 @@ class XiaozhiClient:
         }
         await self.ws.send(json.dumps(detect))
 
-    async def on_wake_word(self):
+    async def on_wake_word(self, mic_angle: float = -1):
         if not self.connected:
             log.warning("多多未连接，忽略唤醒")
             return
 
-        add_log("INFO", f"🎙️ 唤醒词触发，打断并开始对话")
+        add_log("INFO", f"🎙️ 唤醒词触发，打断并开始对话 (声源角度={mic_angle}°)")
 
         # 1. 立即静音，丢弃残余音频帧
         self._mute = True
@@ -911,9 +1216,22 @@ class XiaozhiClient:
         # 5. 等一下确保设备完全释放
         await asyncio.sleep(0.1)
 
-        # 云台点头
+        # 声源定位：M2 麦克风角度 → 舵机转向声源
+        # M2 的 220° ≈ 舵机 0°（正前方），映射: pan = 220 - mic_angle
         if self.gimbal and getattr(self.gimbal, 'connected', False):
-            threading.Thread(target=gimbal_online_nod, args=(self.gimbal,), daemon=True).start()
+            if mic_angle >= 0:
+                pan = 220 - mic_angle
+                # 归一化到 -180~180
+                if pan > 180:
+                    pan -= 360
+                elif pan < -180:
+                    pan += 360
+                pan = max(PAN_MIN, min(PAN_MAX, pan))
+                add_log("INFO", f"🎯 声源定位: M2={mic_angle}° → 舵机pan={pan}°")
+                self.gimbal.move_to(pan, 10, speed=20, acc=5)  # 略微抬头
+            else:
+                # 没有角度信息，点头确认
+                threading.Thread(target=gimbal_online_nod, args=(self.gimbal,), daemon=True).start()
             # 头灯微亮表示听到
             from emotions import _light, _light_off, LIGHT_DIM
             _light(self.gimbal, 0, LIGHT_DIM)
@@ -1059,10 +1377,10 @@ async def _xiaozhi_main(gimbal, ws_url):
 
         loop = asyncio.get_event_loop()
 
-        def on_wake():
+        def on_wake(mic_angle=-1):
             # M2 唤醒随时可触发，不暂停监听，直接打断并重新开始
             touch_activity()
-            asyncio.run_coroutine_threadsafe(client.on_wake_word(), loop)
+            asyncio.run_coroutine_threadsafe(client.on_wake_word(mic_angle), loop)
 
         for l in listeners:
             l.start(on_wake)
@@ -1122,57 +1440,33 @@ class VoiceGreeter:
 #  舵机控制器
 # ============================================================
 class GimbalController:
+    """舵机控制器 — 通过 robot_hub 发送指令，不直接操作串口。"""
+
     def __init__(self, port: str = DEFAULT_SERIAL, baud: int = DEFAULT_BAUD):
-        try:
-            self.ser = serial.Serial(port, baud, timeout=1)
-            self.connected = True
-            print(f"[舵机] 已连接: {port} @ {baud}")
-        except Exception as e:
-            self.ser = None
-            self.connected = False
-            print(f"[舵机] 连接失败: {e}")
+        self.hub = get_hub()
+        self.connected = True
+        print(f"[舵机] 通过 robot_hub 控制")
 
         self.pan_angle = 0.0
         self.tilt_angle = 0.0
         self.lock = threading.Lock()
 
-        if self.connected:
-            threading.Thread(target=self._read_feedback, daemon=True).start()
-
-    def _read_feedback(self):
-        while self.connected:
-            try:
-                if self.ser.in_waiting > 0:
-                    line = self.ser.readline()
-                    if line:
-                        data = json.loads(line.decode('utf-8', errors='replace').strip())
-                        if data.get('T') == 1001 and 'pan' in data and 'tilt' in data:
-                            with self.lock:
-                                self.pan_angle = data['pan']
-                                self.tilt_angle = data['tilt']
-                else:
-                    time.sleep(0.02)
-            except Exception:
-                time.sleep(0.05)
+    def _can_control(self):
+        """检查当前模式是否允许 AI_AUTO 控制。"""
+        return self.hub.get_mode() == MODE_AI_AUTO
 
     def send_command(self, data: dict):
         if not self.connected:
             return
-        try:
-            cmd = json.dumps(data) + "\n"
-            self.ser.write(cmd.encode("utf-8"))
-        except Exception as e:
-            print(f"[舵机] 发送失败: {e}")
+        self.hub.raw_command(data, source=MODE_AI_AUTO)
 
     def move_to(self, pan: float, tilt: float, speed: int = 10, acc: int = 1):
         with self.lock:
             self.pan_angle = max(PAN_MIN, min(PAN_MAX, pan))
             self.tilt_angle = max(TILT_MIN, min(TILT_MAX, tilt))
-            self.send_command({
-                "T": CMD_GIMBAL,
-                "X": self.pan_angle, "Y": self.tilt_angle,
-                "SPD": speed, "ACC": acc,
-            })
+            if not self._can_control():
+                return
+            self.hub.gimbal(self.pan_angle, self.tilt_angle, speed, source=MODE_AI_AUTO)
 
     def track_target(self, frame_cx, frame_cy, target_x, target_y,
                      iterate=TRACK_ITERATE):
@@ -1182,21 +1476,18 @@ class GimbalController:
             self.tilt_angle += (frame_cy - target_y) * iterate
             self.pan_angle = max(PAN_MIN, min(PAN_MAX, self.pan_angle))
             self.tilt_angle = max(TILT_MIN, min(TILT_MAX, self.tilt_angle))
+            if not self._can_control():
+                return distance
             spd = max(1, int(distance * TRACK_SPD_RATE / 100))
             acc = max(1, int(distance * TRACK_ACC_RATE))
-            self.send_command({
-                "T": CMD_GIMBAL,
-                "X": self.pan_angle, "Y": self.tilt_angle,
-                "SPD": spd, "ACC": acc,
-            })
+            self.hub.gimbal(self.pan_angle, self.tilt_angle, spd, source=MODE_AI_AUTO)
         return distance
 
     def center(self):
         self.move_to(0, 0, speed=20, acc=5)
 
     def close(self):
-        if self.ser:
-            self.ser.close()
+        pass  # robot_hub manages the serial port
 
 
 # 舵机表情动作
@@ -1348,32 +1639,30 @@ def draw_tracking_results(frame, faces, tracking_name, gesture=None):
 
 
 def open_camera(camera_id, width, height):
-    cap = cv2.VideoCapture(camera_id)
-    if cap.isOpened():
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        ret, frame = cap.read()
-        if ret:
+    """连接 camera_hub 获取帧。"""
+    try:
+        client = CameraClient()
+        client.connect()
+        frame = client.get_frame_cv2()
+        if frame is not None:
             actual_h, actual_w = frame.shape[:2]
-            add_log("INFO", f"摄像头已打开: /dev/video{camera_id} ({actual_w}x{actual_h})")
-            return ("opencv", cap)
-        else:
-            cap.release()
-    add_log("ERROR", "无法打开摄像头")
+            add_log("INFO", f"已连接 camera_hub ({actual_w}x{actual_h})")
+            return ("camera_hub", client)
+    except Exception as e:
+        add_log("ERROR", f"连接 camera_hub 失败: {e}")
     return (None, None)
 
 
 def read_frame(cam_type, cam_obj):
     try:
-        ret, frame = cam_obj.read()
-        return frame if ret else None
+        return cam_obj.get_frame_cv2()
     except Exception:
         return None
 
 
 def close_camera(cam_type, cam_obj):
     try:
-        cam_obj.release()
+        cam_obj.close()
     except Exception:
         pass
 
@@ -1490,6 +1779,19 @@ def camera_tracking_loop(api_url, camera_id, width, height, fps_limit, gimbal, g
                 if faces:
                     touch_activity()
 
+                # 低电量报警：看到人脸 + 电量低 → 语音提醒
+                if faces and _battery_monitor and _battery_monitor.should_warn():
+                    if not (_xiaozhi_client and (_xiaozhi_client.is_speaking or _xiaozhi_client.is_listening)):
+                        _battery_monitor.mark_warned()
+                        v = _battery_monitor.voltage
+                        add_log("WARN", f"🔋 低电量报警! {v:.1f}V")
+                        threading.Thread(
+                            target=edge_tts_speak,
+                            args=(f"我快没电啦！电量只剩{v:.0f}伏了，快给我充电吧！",),
+                            kwargs={"voice": "zh-CN-YunxiaNeural"},
+                            daemon=True,
+                        ).start()
+
                 with lock:
                     latest_results = faces
                     latest_raw_frame = frame.copy()
@@ -1517,6 +1819,9 @@ def camera_tracking_loop(api_url, camera_id, width, height, fps_limit, gimbal, g
                                           for k, v in greeter.last_greet_time.items()},
                         "gesture": gesture,
                         "xiaozhi": xz_status,
+                        "moving": _movement_ctrl.is_moving if _movement_ctrl else False,
+                        "battery_v": round(_battery_monitor.voltage, 1) if _battery_monitor else 0,
+                        "battery_low": _battery_monitor.is_low if _battery_monitor else False,
                     }
             else:
                 api_err_count += 1
@@ -1727,7 +2032,7 @@ def main():
     if args.no_gimbal:
         gimbal_instance = GimbalController.__new__(GimbalController)
         gimbal_instance.connected = False
-        gimbal_instance.ser = None
+        gimbal_instance.hub = None
         gimbal_instance.pan_angle = 0
         gimbal_instance.tilt_angle = 0
         gimbal_instance.lock = threading.Lock()
@@ -1740,6 +2045,12 @@ def main():
     greeter_instance = VoiceGreeter(cooldown=GREET_COOLDOWN)
 
     gesture_instance = None
+
+    # 初始化移动控制器 + 电量监控
+    global _movement_ctrl, _battery_monitor
+    _movement_ctrl = MovementController(gimbal_instance)
+    _battery_monitor = BatteryMonitor()
+    add_log("INFO", "🚗 移动控制器已初始化")
 
     # 多多对话线程（启动语音由多多 announce_online 播报）
     if not args.no_xiaozhi and OPUS_OK:
